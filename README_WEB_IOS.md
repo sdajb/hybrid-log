@@ -69,3 +69,8 @@ This version uses Vite `base: "/hybrid-log/"`, so it is intended for the reposit
 ## Changelog
 
 - Fixed iOS/web tab swipe so horizontal swipes no longer drag the active tab vertically at the same time.
+
+
+## Update notes
+
+- This web build includes web-only patch notes so testers can see what changed after GitHub Pages updates.

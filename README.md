@@ -101,3 +101,10 @@ Rename Package** 기능을 쓰는 게 제일 안전함.
 IndexedDB(`idb` 라이브러리 추천)로 바꾸면 나머지 코드는 손댈 필요 없습니다 —
 `window.storage.get/set/delete/list` 인터페이스만 유지하면 됩니다.
 
+
+
+## Changelog
+
+- Added body fat direct input / visual estimate / skip flow.
+- Body-fat estimate source and confidence are stored with body composition entries.
+- Added web-only patch notes dialog for GitHub Pages updates.

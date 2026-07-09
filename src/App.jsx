@@ -840,6 +840,8 @@ const DEFAULT_SETTINGS = {
   startDate: todayStr(),
   startWeight: 0,
   startBF: 0,
+  startBFSource: "none",
+  startBFConfidence: "none",
   goalWeightLow: 0,
   goalWeightHigh: 0,
   goalBFLow: 0,
@@ -864,6 +866,91 @@ const GREETINGS = [
   (name) => `Steady hands, ${name}`,
   (name) => `Today counts too, ${name}`,
 ];
+
+const APP_VERSION = "0.3.0";
+const PATCH_NOTES = [
+  {
+    version: "0.3.0",
+    date: "2026-07-09",
+    titleKo: "체지방 추정과 스와이프 개선",
+    titleEn: "Body fat estimate and swipe polish",
+    itemsKo: [
+      "체지방률을 모를 때 눈대중 5단계로 시작할 수 있게 했습니다.",
+      "체지방 직접 입력/추정/건너뛰기 흐름을 추가했습니다.",
+      "추정 체지방값에는 추정 배지를 표시합니다.",
+      "iOS 웹앱 가로 스와이프 중 세로로 밀리는 현상을 줄였습니다.",
+      "패치노트 기능을 추가했습니다.",
+    ],
+    itemsEn: [
+      "Added a 5-step visual body-fat estimate for users who do not know their body-fat percentage.",
+      "Added manual / estimate / skip flows for body-fat setup.",
+      "Estimated body-fat values now show an estimate badge.",
+      "Reduced vertical drift while swiping tabs in the iOS web app.",
+      "Added patch notes.",
+    ],
+  },
+];
+
+const BODY_FAT_ESTIMATE_OPTIONS = [
+  { id: "lean", value: 13, labelKo: "마른 편", labelEn: "Lean", descKo: "복근/윤곽이 꽤 보임", descEn: "Abs or definition visible" },
+  { id: "fit", value: 17, labelKo: "운동한 평균", labelEn: "Fit average", descKo: "복근은 약하지만 허리선 있음", descEn: "Some waist shape, less definition" },
+  { id: "average", value: 22, labelKo: "평균적", labelEn: "Average", descKo: "배가 약간 있고 일반적인 체형", descEn: "Some belly, common build" },
+  { id: "soft", value: 27, labelKo: "배가 있는 편", labelEn: "Softer", descKo: "복부 지방이 확실히 보임", descEn: "Belly fat clearly visible" },
+  { id: "high", value: 33, labelKo: "높은 편", labelEn: "Higher", descKo: "비만에 가까운 체형", descEn: "Closer to obese range" },
+];
+
+function getBodyFatSourceMeta(source, t) {
+  if (source === "visual_estimate") return { label: t("눈대중 추정", "Visual estimate"), confidence: t("낮은 신뢰도", "Low confidence") };
+  if (source === "measurement_formula") return { label: t("치수 추정", "Measurement estimate"), confidence: t("중간 신뢰도", "Medium confidence") };
+  if (source === "manual") return { label: t("직접 입력", "Manual"), confidence: t("높은 신뢰도", "High confidence") };
+  return { label: t("미입력", "Not set"), confidence: "" };
+}
+
+function BodyFatSourceBadge({ source }) {
+  const { t } = useLang();
+  const theme = useTheme();
+  if (!source || source === "manual") return null;
+  const meta = getBodyFatSourceMeta(source, t);
+  return (
+    <span style={{
+      display: "inline-flex", alignItems: "center", marginLeft: 6, padding: "2px 6px",
+      borderRadius: 999, border: `1px solid ${tint(theme.plan || theme.ring, 0.42)}`,
+      background: tint(theme.plan || theme.ring, 0.14), color: theme.textDim,
+      fontSize: 10.5, fontWeight: 800, verticalAlign: "middle",
+    }}>
+      {meta.label}
+    </span>
+  );
+}
+
+function BodyFatEstimateSelector({ value, onSelect, compact = false }) {
+  const { t } = useLang();
+  const theme = useTheme();
+  const current = value ? Number(value) : null;
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: compact ? "1fr" : "1fr", gap: 6 }}>
+      {BODY_FAT_ESTIMATE_OPTIONS.map((opt) => {
+        const active = current === opt.value;
+        return (
+          <button key={opt.id} type="button" onClick={() => onSelect(opt.value)}
+            style={{
+              width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
+              padding: compact ? "8px 10px" : "9px 10px", borderRadius: 12, cursor: "pointer",
+              border: `1px solid ${active ? (theme.plan || theme.ring) : theme.border}`,
+              background: active ? tint(theme.plan || theme.ring, 0.16) : "transparent",
+              color: theme.text, textAlign: "left",
+            }}>
+            <span style={{ minWidth: 0 }}>
+              <span style={{ display: "block", fontSize: 12.5, fontWeight: 850 }}>{t(opt.labelKo, opt.labelEn)} · {opt.value}%</span>
+              <span style={{ display: "block", fontSize: 11, color: theme.textFaint, marginTop: 2, lineHeight: 1.35 }}>{t(opt.descKo, opt.descEn)}</span>
+            </span>
+            {active && <Check size={14} color={theme.plan || theme.ring} />}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 /* ---------------------------------------------------------
    STORAGE HELPERS
@@ -905,6 +992,9 @@ function migrateSettings(raw) {
   if (!s.colorPalette || !PALETTES[s.colorPalette]) s.colorPalette = DEFAULT_PALETTE;
   if (!s.goalMode) s.goalMode = "cut";
   if (!s.activityLevel) s.activityLevel = "low";
+  if (s.startBF && !s.startBFSource) s.startBFSource = "manual";
+  if (!s.startBFSource) s.startBFSource = s.startBF ? "manual" : "none";
+  if (!s.startBFConfidence) s.startBFConfidence = s.startBFSource === "manual" ? "high" : s.startBFSource === "visual_estimate" ? "low" : "none";
   s.storageVersion = STORAGE_VERSION;
   return s;
 }
@@ -915,7 +1005,10 @@ function migrateNutritionEntry(n) {
   return { meal: "", calories: "", protein: "", carbs: "", fat: "", quality: null, ...n, date: n?.date || todayStr() };
 }
 function migrateBodyEntry(b) {
-  return { ...b, date: b?.date || todayStr() };
+  const bodyfat = b?.bodyfat ?? null;
+  const source = b?.bodyfatSource || (bodyfat != null ? "manual" : "none");
+  const confidence = b?.bodyfatConfidence || (source === "manual" ? "high" : source === "visual_estimate" ? "low" : "none");
+  return { ...b, date: b?.date || todayStr(), bodyfatSource: source, bodyfatConfidence: confidence };
 }
 async function runStorageMigrations() {
   const current = await loadKey("storageVersion", 0);
@@ -1504,10 +1597,13 @@ function ProgressRing({ pct, size = 128, stroke = 10, color, trackColor, label, 
 function getLatestBodyComp(bodycomp, settings = {}) {
   const sorted = [...(bodycomp || [])].sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
   const latest = sorted[sorted.length - 1] || null;
+  const bodyfat = latest?.bodyfat ?? settings.startBF ?? null;
+  const bodyfatSource = latest?.bodyfat != null ? (latest.bodyfatSource || "manual") : (settings.startBFSource || (settings.startBF ? "manual" : "none"));
   return {
     latest,
     weight: latest?.weight ?? settings.startWeight ?? null,
-    bodyfat: latest?.bodyfat ?? settings.startBF ?? null,
+    bodyfat,
+    bodyfatSource,
   };
 }
 
@@ -4889,14 +4985,18 @@ function NutritionTab({ settings, bodycomp, workouts, nutrition, setNutrition, c
 function BodyCompTab({ bodycomp, setBodycomp }) {
   const { t } = useLang();
   const theme = useTheme();
-  const [form, setForm] = useState({ date: todayStr(), weight: "", bodyfat: "", muscleMass: "", condition: "fasted" });
+  const [form, setForm] = useState({ date: todayStr(), weight: "", bodyfat: "", bodyfatSource: "manual", bodyfatConfidence: "high", muscleMass: "", condition: "fasted" });
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
 
   const save = () => {
     if (!form.weight) return;
+    const hasBodyfat = form.bodyfat !== "" && form.bodyfat != null;
+    const bodyfatSource = hasBodyfat ? (form.bodyfatSource || "manual") : "none";
     const entryData = {
-      date: form.date, weight: +form.weight, bodyfat: form.bodyfat ? +form.bodyfat : null,
+      date: form.date, weight: +form.weight, bodyfat: hasBodyfat ? +form.bodyfat : null,
+      bodyfatSource,
+      bodyfatConfidence: hasBodyfat ? (form.bodyfatConfidence || (bodyfatSource === "visual_estimate" ? "low" : "high")) : "none",
       muscleMass: form.muscleMass ? +form.muscleMass : null, condition: form.condition,
     };
     if (editingId) {
@@ -4904,13 +5004,15 @@ function BodyCompTab({ bodycomp, setBodycomp }) {
     } else {
       setBodycomp([{ id: uid(), ...entryData }, ...bodycomp]);
     }
-    setForm({ date: todayStr(), weight: "", bodyfat: "", muscleMass: "", condition: "fasted" });
+    setForm({ date: todayStr(), weight: "", bodyfat: "", bodyfatSource: "manual", bodyfatConfidence: "high", muscleMass: "", condition: "fasted" });
     setEditingId(null);
     setShowForm(false);
   };
   const startEdit = (entry) => {
     setForm({
       date: entry.date, weight: String(entry.weight), bodyfat: entry.bodyfat != null ? String(entry.bodyfat) : "",
+      bodyfatSource: entry.bodyfatSource || (entry.bodyfat != null ? "manual" : "none"),
+      bodyfatConfidence: entry.bodyfatConfidence || (entry.bodyfatSource === "visual_estimate" ? "low" : "high"),
       muscleMass: entry.muscleMass != null ? String(entry.muscleMass) : "", condition: entry.condition || "fasted",
     });
     setEditingId(entry.id);
@@ -4946,8 +5048,30 @@ function BodyCompTab({ bodycomp, setBodycomp }) {
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
               <Field label={t("날짜", "Date")}><TextInput type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} /></Field>
               <Field label={t("체중(kg)", "Weight (kg)")}><TextInput type="number" step="0.1" value={form.weight} onChange={(e) => setForm({ ...form, weight: e.target.value })} placeholder="102.9" /></Field>
-              <Field label={t("체지방(%, 선택)", "Body Fat % (optional)")}><TextInput type="number" step="0.1" value={form.bodyfat} onChange={(e) => setForm({ ...form, bodyfat: e.target.value })} placeholder="30.5" /></Field>
+              <Field label={t("체지방(%, 선택)", "Body Fat % (optional)")}><TextInput type="number" step="0.1" value={form.bodyfat} onChange={(e) => setForm({ ...form, bodyfat: e.target.value, bodyfatSource: e.target.value ? "manual" : "none", bodyfatConfidence: e.target.value ? "high" : "none" })} placeholder="30.5" /></Field>
               <Field label={t("근육량(kg, 선택)", "Muscle Mass (kg, optional)")}><TextInput type="number" step="0.1" value={form.muscleMass} onChange={(e) => setForm({ ...form, muscleMass: e.target.value })} placeholder="38.2" /></Field>
+            </div>
+            <div style={{ marginBottom: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                <div style={{ fontSize: 12, color: theme.textFaint, letterSpacing: "0.04em" }}>
+                  {t("체지방을 모를 때", "If you don't know body fat")}
+                </div>
+                {form.bodyfat && <span style={{ fontSize: 11, color: theme.textFaint }}>{getBodyFatSourceMeta(form.bodyfatSource, t).label}</span>}
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 8 }}>
+                <button type="button" onClick={() => setForm({ ...form, bodyfatSource: "manual", bodyfatConfidence: "high" })}
+                  style={{ padding: 8, borderRadius: 12, border: `1px solid ${form.bodyfatSource === "manual" ? theme.lift : theme.border}`, background: form.bodyfatSource === "manual" ? tint(theme.lift, 0.14) : "transparent", color: theme.text, fontSize: 12, fontWeight: 750, cursor: "pointer" }}>
+                  {t("직접 입력", "Manual")}
+                </button>
+                <button type="button" onClick={() => setForm({ ...form, bodyfat: "", bodyfatSource: "none", bodyfatConfidence: "none" })}
+                  style={{ padding: 8, borderRadius: 12, border: `1px solid ${form.bodyfatSource === "none" ? theme.textFaint : theme.border}`, background: form.bodyfatSource === "none" ? tint(theme.textFaint, 0.10) : "transparent", color: theme.text, fontSize: 12, fontWeight: 750, cursor: "pointer" }}>
+                  {t("건너뛰기", "Skip")}
+                </button>
+              </div>
+              <BodyFatEstimateSelector value={form.bodyfatSource === "visual_estimate" ? form.bodyfat : ""} onSelect={(value) => setForm({ ...form, bodyfat: String(value), bodyfatSource: "visual_estimate", bodyfatConfidence: "low" })} compact />
+              <div style={{ fontSize: 11, color: theme.textFaint, lineHeight: 1.45, marginTop: 7 }}>
+                {t("눈대중 값은 정확한 측정이 아니라 칼로리 계산을 시작하기 위한 대략적인 기준점입니다.", "Visual estimates are not precise measurements — just a starting point for calorie planning.")}
+              </div>
             </div>
             <div style={{ marginBottom: 10 }}>
               <div style={{ fontSize: 12, color: theme.textFaint, letterSpacing: "0.04em", marginBottom: 6 }}>
@@ -5000,7 +5124,7 @@ function BodyCompTab({ bodycomp, setBodycomp }) {
         {sorted.map((b) => (
           <Card key={b.id} style={{ padding: 12, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <div>
-              <div style={{ fontSize: 14, fontWeight: 700, color: theme.text }}>{b.weight}kg{b.bodyfat ? ` · ${b.bodyfat}%` : ""}{b.muscleMass ? ` · ${t("근육", "SM")} ${b.muscleMass}kg` : ""}</div>
+              <div style={{ fontSize: 14, fontWeight: 700, color: theme.text }}>{b.weight}kg{b.bodyfat ? <> · {b.bodyfat}%<BodyFatSourceBadge source={b.bodyfatSource} /></> : ""}{b.muscleMass ? ` · ${t("근육", "SM")} ${b.muscleMass}kg` : ""}</div>
               <div style={{ fontSize: 12, color: theme.textDim }}>{fmtDate(b.date)}</div>
             </div>
             <div style={{ display: "flex", alignItems: "center" }}>
@@ -5360,7 +5484,7 @@ function ProgressTab({ settings, onSaveSettings, bodycomp, setBodycomp, nutritio
   </div>;
 }
 
-function SettingsTab({ settings, onSaveSettings, workouts, nutrition, bodycomp, programs, onShowIntro }) {
+function SettingsTab({ settings, onSaveSettings, workouts, nutrition, bodycomp, programs, onShowIntro, onShowPatchNotes }) {
   const { lang, t } = useLang();
   const theme = useTheme();
   const [profileDraft, setProfileDraft] = useState({
@@ -5368,6 +5492,8 @@ function SettingsTab({ settings, onSaveSettings, workouts, nutrition, bodycomp, 
     ageYears: settings.ageYears || "",
     heightCm: settings.heightCm || "",
     startWeight: settings.startWeight || "",
+    startBF: settings.startBF || "",
+    startBFSource: settings.startBFSource || (settings.startBF ? "manual" : "none"),
     startDate: settings.startDate || todayStr(),
     sex: settings.sex || "male",
     goalMode: settings.goalMode || "cut",
@@ -5378,11 +5504,13 @@ function SettingsTab({ settings, onSaveSettings, workouts, nutrition, bodycomp, 
     ageYears: settings.ageYears || "",
     heightCm: settings.heightCm || "",
     startWeight: settings.startWeight || "",
+    startBF: settings.startBF || "",
+    startBFSource: settings.startBFSource || (settings.startBF ? "manual" : "none"),
     startDate: settings.startDate || todayStr(),
     sex: settings.sex || "male",
     goalMode: settings.goalMode || "cut",
     activityLevel: settings.activityLevel || "low",
-  }), [settings.userName, settings.ageYears, settings.heightCm, settings.startWeight, settings.startDate, settings.sex, settings.goalMode, settings.activityLevel]);
+  }), [settings.userName, settings.ageYears, settings.heightCm, settings.startWeight, settings.startBF, settings.startBFSource, settings.startDate, settings.sex, settings.goalMode, settings.activityLevel]);
 
   const saveProfile = () => onSaveSettings({
     ...settings,
@@ -5390,6 +5518,9 @@ function SettingsTab({ settings, onSaveSettings, workouts, nutrition, bodycomp, 
     ageYears: Number(profileDraft.ageYears) || 0,
     heightCm: Number(profileDraft.heightCm) || 0,
     startWeight: Number(profileDraft.startWeight) || 0,
+    startBF: Number(profileDraft.startBF) || 0,
+    startBFSource: profileDraft.startBF ? (profileDraft.startBFSource || "manual") : "none",
+    startBFConfidence: profileDraft.startBF ? (profileDraft.startBFSource === "visual_estimate" ? "low" : "high") : "none",
     startDate: profileDraft.startDate || todayStr(),
     sex: profileDraft.sex || "male",
     goalMode: profileDraft.goalMode || "cut",
@@ -5410,6 +5541,7 @@ function SettingsTab({ settings, onSaveSettings, workouts, nutrition, bodycomp, 
           <Field label={t("나이", "Age")}><UnitInput type="number" inputMode="numeric" unit={t("세", "yr")} value={profileDraft.ageYears} onChange={(e) => setProfileDraft({ ...profileDraft, ageYears: e.target.value })} placeholder="23" /></Field>
           <Field label={t("키(cm)", "Height (cm)")}><UnitInput type="number" unit="cm" value={profileDraft.heightCm} onChange={(e) => setProfileDraft({ ...profileDraft, heightCm: e.target.value })} placeholder="175" /></Field>
           <Field label={t("시작 체중(kg)", "Starting weight (kg)")}><UnitInput type="number" step="0.1" unit="kg" value={profileDraft.startWeight} onChange={(e) => setProfileDraft({ ...profileDraft, startWeight: e.target.value })} placeholder="80" /></Field>
+          <Field label={t("시작 체지방(%, 선택)", "Starting body fat % (optional)")}><UnitInput type="number" step="0.1" unit="%" value={profileDraft.startBF} onChange={(e) => setProfileDraft({ ...profileDraft, startBF: e.target.value, startBFSource: e.target.value ? "manual" : "none" })} placeholder="22" /></Field>
           <Field label={t("시작 날짜", "Start date")}><TextInput type="date" value={profileDraft.startDate} onChange={(e) => setProfileDraft({ ...profileDraft, startDate: e.target.value })} /></Field>
           <Field label={t("성별", "Sex")}><Select value={profileDraft.sex} onChange={(e) => setProfileDraft({ ...profileDraft, sex: e.target.value })}><option value="male">{t("남성", "Male")}</option><option value="female">{t("여성", "Female")}</option></Select></Field>
           <Field label={t("목표", "Goal")}><Select value={profileDraft.goalMode} onChange={(e) => setProfileDraft({ ...profileDraft, goalMode: e.target.value })}><option value="cut">{t("감량", "Cut")}</option><option value="maintain">{t("유지", "Maintain")}</option><option value="gain">{t("증량", "Gain")}</option></Select></Field>
@@ -5660,6 +5792,20 @@ function SettingsTab({ settings, onSaveSettings, workouts, nutrition, bodycomp, 
       </Card>
 
       <Card>
+        <SectionTitle>{t("패치노트", "Patch Notes")}</SectionTitle>
+        <div style={{ fontSize: 12, color: theme.textFaint, marginBottom: 10, lineHeight: 1.5 }}>
+          {t("웹앱 업데이트 후 바뀐 내용을 확인할 수 있어요.", "See what changed after web app updates.")}
+        </div>
+        <button onClick={onShowPatchNotes}
+          style={{
+            width: "100%", padding: "10px 14px", borderRadius: 12, border: `1px solid ${theme.border}`,
+            background: "none", color: theme.text, fontSize: 13, fontWeight: 600, cursor: "pointer",
+          }}>
+          {t("패치노트 보기", "View patch notes")}
+        </button>
+      </Card>
+
+      <Card>
         <SectionTitle>{t("정보", "About")}</SectionTitle>
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
           <div style={{ fontSize: 13, color: theme.textDim }}>
@@ -5691,6 +5837,8 @@ function Onboarding({ onDone, settings, onSaveSettings, isFirstTime }) {
   const [qsAge, setQsAge] = useState("");
   const [qsHeight, setQsHeight] = useState("");
   const [qsWeight, setQsWeight] = useState("");
+  const [qsBodyfat, setQsBodyfat] = useState("");
+  const [qsBodyfatMode, setQsBodyfatMode] = useState("skip");
   const [qsGoal, setQsGoal] = useState("cut");
   const [qsActivity, setQsActivity] = useState("low");
   const [qsPregnant, setQsPregnant] = useState(false);
@@ -5714,6 +5862,14 @@ function Onboarding({ onDone, settings, onSaveSettings, isFirstTime }) {
     if (qsAge) updates.ageYears = Number(qsAge);
     if (qsHeight) updates.heightCm = Number(qsHeight);
     if (qsWeight) updates.startWeight = Number(qsWeight);
+    if (qsBodyfat && qsBodyfatMode !== "skip") {
+      updates.startBF = Number(qsBodyfat);
+      updates.startBFSource = qsBodyfatMode === "visual" ? "visual_estimate" : "manual";
+      updates.startBFConfidence = qsBodyfatMode === "visual" ? "low" : "high";
+    } else {
+      updates.startBFSource = "none";
+      updates.startBFConfidence = "none";
+    }
     onSaveSettings({ ...settings, ...updates });
     onDone();
   };
@@ -5746,6 +5902,22 @@ function Onboarding({ onDone, settings, onSaveSettings, isFirstTime }) {
             <Field label={t("키(cm)", "Height (cm)")}><TextInput type="number" value={qsHeight} onChange={(e) => setQsHeight(e.target.value)} placeholder="178" /></Field>
           </div>
           <Field label={t("현재 체중(kg)", "Current Weight (kg)")}><TextInput type="number" step="0.1" value={qsWeight} onChange={(e) => setQsWeight(e.target.value)} placeholder="91.4" /></Field>
+          <div>
+            <div style={{ fontSize: 12, color: theme.textFaint, marginBottom: 6 }}>{t("체지방률", "Body Fat %")}</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6, marginBottom: 8 }}>
+              {[["manual", t("직접 입력", "Manual")], ["visual", t("눈대중", "Estimate")], ["skip", t("건너뛰기", "Skip")]].map(([id, label]) => (
+                <button key={id} onClick={() => { setQsBodyfatMode(id); if (id === "skip") setQsBodyfat(""); }}
+                  style={{ padding: "8px 2px", borderRadius: 12, fontSize: 12, cursor: "pointer", border: `1px solid ${qsBodyfatMode === id ? theme.lift : theme.border}`, background: qsBodyfatMode === id ? tint(theme.lift, 0.16) : "transparent", color: theme.text }}>
+                  {label}
+                </button>
+              ))}
+            </div>
+            {qsBodyfatMode === "manual" && <TextInput type="number" step="0.1" value={qsBodyfat} onChange={(e) => setQsBodyfat(e.target.value)} placeholder="22" />}
+            {qsBodyfatMode === "visual" && <BodyFatEstimateSelector value={qsBodyfat} onSelect={(value) => setQsBodyfat(String(value))} compact />}
+            <div style={{ fontSize: 11, color: theme.textFaint, lineHeight: 1.35, marginTop: 6 }}>
+              {t("모르면 건너뛰거나 눈대중으로 시작해도 됩니다. 나중에 Body Update에서 수정할 수 있어요.", "You can skip this or start with a visual estimate. Update it later in Body Update.")}
+            </div>
+          </div>
           <div>
             <div style={{ fontSize: 12, color: theme.textFaint, marginBottom: 6 }}>{t("목표", "Goal")}</div>
             <div style={{ display: "flex", gap: 6 }}>
@@ -5849,6 +6021,55 @@ function Onboarding({ onDone, settings, onSaveSettings, isFirstTime }) {
 // Shown for a few seconds after a delete, giving a chance to undo before
 // it's gone for good — small icon-only delete buttons in scrollable lists
 // are easy to tap by accident, so a single irreversible tap felt risky.
+function PatchNotesDialog({ onClose }) {
+  const { t, lang } = useLang();
+  const theme = useTheme();
+  const latest = PATCH_NOTES[0];
+  const dialog = (
+    <div
+      role="presentation"
+      style={{
+        position: "fixed", inset: 0, zIndex: 1150, background: "rgba(0,0,0,0.52)",
+        display: "flex", alignItems: "flex-end", justifyContent: "center",
+        padding: "max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom))",
+        boxSizing: "border-box",
+      }}
+    >
+      <div
+        role="dialog" aria-modal="true" aria-label={t("패치노트", "Patch Notes")}
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: theme.darkPanel || theme.surface, border: `1px solid ${theme.border}`, borderRadius: 22,
+          padding: 18, maxWidth: 460, width: "100%", boxSizing: "border-box",
+          boxShadow: "0 22px 54px rgba(0,0,0,0.42)", fontFamily: BODY_FONT_STACK,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, marginBottom: 12 }}>
+          <div>
+            <div style={{ fontSize: 12, color: theme.textFaint, fontWeight: 850, letterSpacing: "0.08em", textTransform: "uppercase" }}>{t("업데이트", "What's New")}</div>
+            <div style={{ fontSize: 18, fontWeight: 900, color: theme.text, marginTop: 3 }}>{lang === "en" ? latest.titleEn : latest.titleKo}</div>
+            <div style={{ fontSize: 12, color: theme.textDim, marginTop: 3 }}>v{latest.version} · {latest.date}</div>
+          </div>
+          <button onClick={onClose} aria-label="Close" style={{ width: 34, height: 34, borderRadius: 12, border: `1px solid ${theme.border}`, background: "transparent", color: theme.textDim, display: "grid", placeItems: "center", cursor: "pointer", flexShrink: 0 }}>
+            <X size={16} />
+          </button>
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
+          {(lang === "en" ? latest.itemsEn : latest.itemsKo).map((item, index) => (
+            <div key={index} style={{ display: "flex", gap: 8, alignItems: "flex-start", color: theme.textDim, fontSize: 13, lineHeight: 1.45 }}>
+              <span style={{ width: 18, height: 18, borderRadius: 999, background: tint(theme.lift, 0.16), color: theme.lift, display: "grid", placeItems: "center", fontSize: 11, fontWeight: 900, flexShrink: 0 }}>{index + 1}</span>
+              <span>{item}</span>
+            </div>
+          ))}
+        </div>
+        <PrimaryButton onClick={onClose}>{t("확인", "Got it")}</PrimaryButton>
+      </div>
+    </div>
+  );
+  return typeof document !== "undefined" ? createPortal(dialog, document.body) : dialog;
+}
+
 function ConfirmDialog({ message, onConfirm, onCancel, confirmLabel, cancelLabel, tone = "danger", hideCancel = false }) {
   const theme = useTheme();
   const { t } = useLang();
@@ -5927,6 +6148,7 @@ export default function App() {
   const [loaded, setLoaded] = useState(false);
   const [showIntroAgain, setShowIntroAgain] = useState(false);
   const [showSettingsSheet, setShowSettingsSheet] = useState(false);
+  const [showPatchNotes, setShowPatchNotes] = useState(false);
   const [tab, setTab] = useState("today");
   const [actInitialView, setActInitialView] = useState(null);
   const [actResetSignal, setActResetSignal] = useState(0);
@@ -6013,6 +6235,20 @@ export default function App() {
   const setWeekPlan = useCallback((v) => { setWeekPlanState(v); saveKey("weekPlan", v).then((ok) => !ok && setErr("저장 실패 / Save failed")); }, []);
   const setDayLogs = useCallback((v) => { setDayLogsState(v); saveKey("dayLogs", v).then((ok) => !ok && setErr("저장 실패 / Save failed")); }, []);
   const saveSettings = useCallback((v) => { setSettings(v); saveKey("settings", v).then((ok) => !ok && setErr("저장 실패 / Save failed")); }, []);
+
+  useEffect(() => {
+    if (!loaded) return;
+    let mounted = true;
+    loadKey("lastSeenPatchNotesVersion", null).then((seen) => {
+      if (mounted && seen !== APP_VERSION) setShowPatchNotes(true);
+    });
+    return () => { mounted = false; };
+  }, [loaded]);
+
+  const closePatchNotes = useCallback(() => {
+    setShowPatchNotes(false);
+    saveKey("lastSeenPatchNotesVersion", APP_VERSION);
+  }, []);
 
   useEffect(() => {
     if (!document.getElementById("hybrid-log-font")) {
@@ -6471,8 +6707,10 @@ export default function App() {
         </div>
       </div>
 
+      {showPatchNotes && <PatchNotesDialog onClose={closePatchNotes} />}
+
       <SettingsSheet open={showSettingsSheet} onClose={() => setShowSettingsSheet(false)}>
-        <SettingsTab settings={settings} onSaveSettings={saveSettings} workouts={workouts} nutrition={nutrition} bodycomp={bodycomp} programs={programs} onShowIntro={() => setShowIntroAgain(true)} />
+        <SettingsTab settings={settings} onSaveSettings={saveSettings} workouts={workouts} nutrition={nutrition} bodycomp={bodycomp} programs={programs} onShowIntro={() => setShowIntroAgain(true)} onShowPatchNotes={() => setShowPatchNotes(true)} />
       </SettingsSheet>
 
       <div style={{
