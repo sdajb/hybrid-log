@@ -64,3 +64,8 @@ https://YOUR_GITHUB_ID.github.io/hybrid-log/
 ```
 
 This version uses Vite `base: "/hybrid-log/"`, so it is intended for the repository name `hybrid-log`.
+
+
+## Changelog
+
+- Fixed iOS/web tab swipe so horizontal swipes no longer drag the active tab vertically at the same time.

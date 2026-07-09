@@ -6159,6 +6159,8 @@ export default function App() {
 
   const dragStartRef = useRef(null);
   const draggingRef = useRef(false);
+  const dragScrollTopRef = useRef(0);
+  const dragLockedSlideRef = useRef(null);
   const [dragPx, setDragPx] = useState(0);
   const [live, setLive] = useState(false);
 
@@ -6202,6 +6204,10 @@ export default function App() {
     const el = slideRefs.current[tab];
     if (el) el.scrollTo({ top: 0, behavior: "smooth" });
   };
+  useEffect(() => {
+    return () => unlockHorizontalSwipeScroll();
+  }, []);
+
 
   const returnToToday = useCallback(() => {
     setShowSettingsSheet(false);
@@ -6282,10 +6288,38 @@ export default function App() {
     };
   }, [tab, actCurrentView, showSettingsSheet, showIntroAgain, returnToToday]);
 
+  const lockHorizontalSwipeScroll = () => {
+    const activeSlide = slideRefs.current[tab];
+    if (!activeSlide) return;
+    dragLockedSlideRef.current = activeSlide;
+    dragScrollTopRef.current = activeSlide.scrollTop || 0;
+    activeSlide.style.overflowY = "hidden";
+    activeSlide.style.touchAction = "none";
+  };
+
+  const unlockHorizontalSwipeScroll = () => {
+    const lockedSlide = dragLockedSlideRef.current;
+    if (lockedSlide) {
+      lockedSlide.style.overflowY = "auto";
+      lockedSlide.style.touchAction = "pan-y";
+    }
+    dragLockedSlideRef.current = null;
+  };
+
+  const keepHorizontalSwipeScrollLocked = () => {
+    const lockedSlide = dragLockedSlideRef.current;
+    if (lockedSlide && Math.abs((lockedSlide.scrollTop || 0) - dragScrollTopRef.current) > 0.5) {
+      lockedSlide.scrollTop = dragScrollTopRef.current;
+    }
+  };
+
   const handleTouchStart = (e) => {
+    unlockHorizontalSwipeScroll();
     const locked = e.target.closest && e.target.closest("input, textarea, select, button, a, [contenteditable='true'], [data-no-tab-swipe='true'], [role='dialog'], [role='menu']");
     if (locked || document.activeElement?.matches?.("input, textarea, select, [contenteditable='true']")) { dragStartRef.current = null; return; }
     const touch = e.touches[0];
+    const activeSlide = slideRefs.current[tab];
+    dragScrollTopRef.current = activeSlide?.scrollTop || 0;
     dragStartRef.current = { x: touch.clientX, y: touch.clientY, time: Date.now() };
     draggingRef.current = false;
     setLive(false);
@@ -6299,22 +6333,25 @@ export default function App() {
     if (!draggingRef.current) {
       if (Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy) * 1.3) {
         draggingRef.current = true;
+        lockHorizontalSwipeScroll();
         setLive(true);
       } else if (Math.abs(dy) > 10 && Math.abs(dy) > Math.abs(dx) * 1.1) {
+        unlockHorizontalSwipeScroll();
         dragStartRef.current = null; // decisively vertical — let the page scroll normally
         return;
       } else {
         return; // still ambiguous — wait for a clearer read before deciding either way
       }
     }
-    e.preventDefault(); // once we've claimed the gesture, don't let any descendant (e.g. a button) interfere
+    e.preventDefault(); // once we've claimed the gesture, don't let vertical scroll ride along with the tab swipe
+    keepHorizontalSwipeScrollLocked();
     let clamped = dx;
     if (tabIndex === 0 && dx > 0) clamped = dx * 0.35; // rubber-band at the edges
     if (tabIndex === tabs.length - 1 && dx < 0) clamped = dx * 0.35;
     setDragPx(clamped);
   };
   const handleTouchEnd = () => {
-    if (!draggingRef.current) { dragStartRef.current = null; return; }
+    if (!draggingRef.current) { unlockHorizontalSwipeScroll(); dragStartRef.current = null; return; }
     // A quick short flick completes the swipe too — doesn't need to cross
     // the full drag-distance threshold, just needs to be fast.
     const elapsed = Date.now() - (dragStartRef.current?.time || Date.now());
@@ -6329,6 +6366,7 @@ export default function App() {
     setDragPx(0);
     dragStartRef.current = null;
     draggingRef.current = false;
+    unlockHorizontalSwipeScroll();
   };
 
   if (!loaded) {
@@ -6408,7 +6446,8 @@ export default function App() {
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
-        style={{ flex: 1, overflow: "hidden", maxWidth: 520, width: "100%", margin: "0 auto", position: "relative" }}
+        onTouchCancel={handleTouchEnd}
+        style={{ flex: 1, overflow: "hidden", maxWidth: 520, width: "100%", margin: "0 auto", position: "relative", touchAction: "pan-y" }}
       >
         <div style={{
           display: "flex",
@@ -6421,7 +6460,7 @@ export default function App() {
             <div key={tb.id}
               ref={(el) => { slideRefs.current[tb.id] = el; }}
               onScroll={(e) => { if (tb.id === tab) setShowScrollTop(e.currentTarget.scrollTop > 150); }}
-              style={{ width: trackWidth, flexShrink: 0, height: "100%", overflowY: "auto", boxSizing: "border-box", padding: 16, paddingBottom: "calc(120px + env(safe-area-inset-bottom))", scrollPaddingBottom: 180, overscrollBehavior: "contain" }}>
+              style={{ width: trackWidth, flexShrink: 0, height: "100%", overflowY: "auto", boxSizing: "border-box", padding: 16, paddingBottom: "calc(120px + env(safe-area-inset-bottom))", scrollPaddingBottom: 180, overscrollBehavior: "contain", touchAction: "pan-y" }}>
               {tb.id === "today" && <TodayTab settings={settings} bodycomp={bodycomp} recentAvgSteps={recentAvgSteps} currentSteps={currentSteps} stepTrackingEnabled={stepTrackingEnabled} goToTab={goToTab} openActView={openActView} workouts={workouts} nutrition={nutrition} dayLogs={dayLogs} />}
               {tb.id === "act" && <ActTab workouts={workouts} setWorkouts={setWorkouts} programs={programs} bodycomp={bodycomp} setBodycomp={setBodycomp} dayLogs={dayLogs} setDayLogs={setDayLogs} initialView={actInitialView} onConsumedInitialView={() => setActInitialView(null)} resetSignal={actResetSignal} onViewChange={setActCurrentView} currentSteps={currentSteps} stepTrackingEnabled={stepTrackingEnabled} />}
               {tb.id === "eat" && <NutritionTab settings={settings} bodycomp={bodycomp} workouts={workouts} nutrition={nutrition} setNutrition={setNutrition} customFoods={customFoods} setCustomFoods={setCustomFoods} recentAvgSteps={recentAvgSteps} resetSignal={eatResetSignal} />}
