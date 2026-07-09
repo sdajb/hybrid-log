@@ -1,0 +1,9 @@
+{
+  "appId": "com.hybridlog.app",
+  "appName": "Hybrid Log",
+  "webDir": "dist",
+  "backgroundColor": "#E7E1D2",
+  "server": {
+    "androidScheme": "https"
+  }
+}

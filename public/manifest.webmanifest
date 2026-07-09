@@ -1,0 +1,42 @@
+{
+  "name": "Hybrid Log",
+  "short_name": "Hybrid Log",
+  "description": "Retro fitness, nutrition, planning and progress log.",
+  "start_url": "/hybrid-log/",
+  "scope": "/hybrid-log/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#15120E",
+  "theme_color": "#15120E",
+  "categories": [
+    "health",
+    "fitness",
+    "lifestyle"
+  ],
+  "icons": [
+    {
+      "src": "/hybrid-log/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/hybrid-log/icon-maskable-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/hybrid-log/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/hybrid-log/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
