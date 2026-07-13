@@ -359,3 +359,35 @@ The project also includes:
 ```
 
 Both are set to Node 24.
+
+## In-App Patch Notes
+
+Patch notes are now visible inside the app:
+
+```text
+Settings → Patch Notes → Open Patch Notes
+```
+
+## Startup Patch Notes Behaviour
+
+Patch notes are shown automatically once after this release.
+
+Dismiss state is stored locally:
+
+```text
+hybridLog.patchNotesSeen.0.14.48-web
+```
+
+After the user taps `Got it` or opens the full patch notes, the startup patch note will not show again for the same version.
+
+## PWA Safe-Area Behaviour
+
+The web app accounts for mobile/desktop shortcut safe areas:
+
+```text
+env(safe-area-inset-top)
+env(safe-area-inset-bottom)
+100dvh
+```
+
+After this update, delete the old desktop/home-screen shortcut and create it again so the new manifest and viewport metadata are used.

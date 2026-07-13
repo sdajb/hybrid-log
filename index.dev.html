@@ -2,7 +2,7 @@
 <html lang="ko">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
     <meta name="theme-color" content="#0A0A0A" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -19,9 +19,12 @@
       button, input, textarea, select { border-radius: 2px; }
       [data-round="true"] { border-radius: 999px !important; }
       :root { color-scheme: light dark; }
-      body { background: #F5F7FA; }
-      html, body { height: 100%; margin: 0; overflow: hidden; }
-      #root { height: 100%; }
+      body { background: #F5F1E8; }
+      html, body { height: 100%; min-height: 100%; margin: 0; overflow: hidden; background: #F5F1E8; overscroll-behavior: none; }
+      #root { height: 100%; min-height: 100%; background: #F5F1E8; }
+      @supports (height: 100dvh) {
+        html, body, #root { height: 100dvh; min-height: 100dvh; }
+      }
       * { scrollbar-width: none !important; -ms-overflow-style: none !important; }
       *::-webkit-scrollbar { display: none !important; width: 0 !important; height: 0 !important; }
     </style>

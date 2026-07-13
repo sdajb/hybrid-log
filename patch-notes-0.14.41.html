@@ -144,6 +144,28 @@ node-version: 24
 actions/upload-pages-artifact@v4
 actions/deploy-pages@v5</pre>
 
+
+    <h2>0.14.47 In-App Patch Notes Link</h2>
+    <p>The Settings screen now includes a visible <strong>Patch Notes</strong> card and button.</p>
+    <p>Open the app, tap the settings icon, then tap <strong>Open Patch Notes</strong>.</p>
+
+
+    <h2>0.14.48 Startup Patch Notes Once</h2>
+    <p>The app now shows patch notes automatically on first launch after this update.</p>
+    <p>After tapping <strong>Got it</strong> or opening the full patch notes, the app stores a local flag and will not show the startup patch note again for this version.</p>
+    <pre>localStorage key:
+hybridLog.patchNotesSeen.0.14.48-web</pre>
+
+
+    <h2>0.14.49 PWA Safe-Area Fix</h2>
+    <p>When opening Hybrid Log from a desktop/home-screen icon, the app now reserves safe area space for the top banner and bottom navigation area.</p>
+    <p>This prevents the top banner/settings button from being cut off and reduces the bottom white bar issue in standalone/PWA mode.</p>
+    <pre>Fixed:
+- safe-area-inset-top
+- safe-area-inset-bottom
+- 100dvh viewport handling
+- root/body background fill</pre>
+
     <h2>Version</h2>
     <pre>Hybrid Log Web 0.14.41
 PWA shortcut and visible patch notes fix</pre>

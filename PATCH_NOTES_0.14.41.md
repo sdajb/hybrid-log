@@ -52,3 +52,38 @@ Deploy from a branch → main → /root
 ```
 
 The original development `index.html` has been backed up as `index.dev.html`.
+
+## 0.14.47 In-App Patch Notes Link
+
+The Settings screen now includes a visible Patch Notes card and button.
+
+Open the app, tap the settings icon, then tap:
+
+```text
+Open Patch Notes
+```
+
+## 0.14.48 Startup Patch Notes Once
+
+The app now shows patch notes automatically on first launch after this update.
+
+After tapping `Got it` or opening the full patch notes, the app stores a local flag and will not show the startup patch note again for this version.
+
+```text
+hybridLog.patchNotesSeen.0.14.48-web
+```
+
+## 0.14.49 PWA Safe-Area Fix
+
+When opening Hybrid Log from a desktop/home-screen icon, the app now reserves safe area space for the top banner and bottom navigation area.
+
+Fixed:
+
+```text
+safe-area-inset-top
+safe-area-inset-bottom
+100dvh viewport handling
+root/body background fill
+```
+
+This prevents the top banner/settings button from being cut off and reduces the bottom white bar issue in standalone/PWA mode.

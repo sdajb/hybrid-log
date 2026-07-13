@@ -17,10 +17,12 @@ import { registerPlugin } from "@capacitor/core";
 // android/app/src/main/java/.../StepCounterPlugin.java). No npm package;
 // registerPlugin() bridges to it by name. Safely rejects in the browser
 // preview / artifact (no native bridge), which callers below handle.
-const BUILD_RELEASE = "0.14.41-web";
+const BUILD_RELEASE = "0.14.49-web";
 const StepCounterPlugin = registerPlugin("StepCounter");
 const RestTimerPlugin = registerPlugin("RestTimer");
 const WEB_BUILD = true;
+const PATCH_NOTES_URL = "/hybrid-log/patch-notes.html";
+const PATCH_NOTES_SEEN_KEY = `hybridLog.patchNotesSeen.${BUILD_RELEASE}`;
 
 // Fire-and-forget haptic feedback. No-ops safely in the browser/artifact
 // preview (no native bridge) and on any device without haptics support.
@@ -2665,6 +2667,99 @@ function SettingsSheet({ open, onClose, children }) {
     </div>, document.body
   );
 }
+
+
+function PatchNotesStartupModal({ open, onDismiss, onOpenNotes }) {
+  const theme = useTheme();
+  const { t } = useLang();
+  if (!open) return null;
+  return createPortal(
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Patch notes"
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 90,
+        background: tint("#000000", 0.42),
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 18,
+        boxSizing: "border-box",
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: "100%",
+          maxWidth: 520,
+          maxHeight: "88vh",
+          overflowY: "auto",
+          background: theme.bg,
+          color: theme.text,
+          border: `1px solid ${theme.border}`,
+          borderRadius: 18,
+          boxShadow: "0 24px 80px rgba(0,0,0,0.38)",
+          padding: "22px 20px calc(20px + env(safe-area-inset-bottom))",
+          boxSizing: "border-box",
+        }}
+      >
+        <div style={{ fontSize: 10.5, letterSpacing: "0.18em", textTransform: "uppercase", fontFamily: MONO_FONT_STACK, color: theme.lift, fontWeight: 800, marginBottom: 8 }}>
+          Hybrid Log {BUILD_RELEASE}
+        </div>
+        <div style={{ fontSize: 24, lineHeight: 1.1, fontWeight: 650, fontStyle: "italic", fontFamily: SERIF_FONT_STACK, color: theme.text, marginBottom: 8 }}>
+          {t("업데이트 패치노트", "Update Patch Notes")}
+        </div>
+        <div style={{ fontSize: 13, color: theme.textDim, lineHeight: 1.55, marginBottom: 18 }}>
+          {t("이번 웹 버전은 GitHub Pages, 바탕화면 아이콘, 패치노트 표시 방식을 정리한 안정화 패치입니다.", "This web release stabilises GitHub Pages deployment, desktop shortcuts, and patch-note visibility.")}
+        </div>
+
+        <div style={{ display: "grid", gap: 11, marginBottom: 18 }}>
+          {[
+            t("앱 시작 시 이 패치노트를 1회 자동 표시합니다.", "Shows this patch note once on app launch."),
+            t("확인 후에는 같은 버전에서 다시 자동으로 뜨지 않습니다.", "After confirmation, it will not auto-open again for this version."),
+            t("바탕화면 아이콘 오류 방지를 위해 기존 shortcut은 삭제 후 다시 만들어야 합니다.", "To avoid desktop shortcut errors, delete the old shortcut and create it again."),
+            t("패치노트는 설정 화면에서도 다시 열 수 있습니다.", "Patch notes can still be opened again from Settings."),
+          ].map((line, i) => (
+            <div key={i} style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+              <div style={{ width: 20, height: 20, borderRadius: 999, background: tint(theme.lift, 0.15), color: theme.lift, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 850, fontFamily: MONO_FONT_STACK, flexShrink: 0 }}>{i + 1}</div>
+              <div style={{ fontSize: 13, lineHeight: 1.45, color: theme.text }}>{line}</div>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: 14, display: "grid", gap: 10 }}>
+          <PrimaryButton onClick={onDismiss}>
+            {t("확인함", "Got it")}
+          </PrimaryButton>
+          <button
+            onClick={onOpenNotes}
+            style={{
+              width: "100%",
+              minHeight: 46,
+              borderRadius: 2,
+              border: `1px solid ${theme.border}`,
+              background: "transparent",
+              color: theme.textDim,
+              fontSize: 12,
+              fontWeight: 750,
+              letterSpacing: "0.1em",
+              textTransform: "uppercase",
+              fontFamily: MONO_FONT_STACK,
+              cursor: "pointer",
+            }}
+          >
+            {t("전체 패치노트 열기", "Open Full Patch Notes")}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
 
 // Shared step-count achievement tiers.
 const STEP_TIERS = [
@@ -6614,6 +6709,36 @@ function SettingsTab({ settings, onSaveSettings, workouts, nutrition, bodycomp, 
         <div style={{ fontSize: 18, fontWeight: 800, color: theme.text }}>{t("설정", "Settings")}</div>
         <div style={{ fontSize: 12, color: theme.textDim, marginTop: 4 }}>{t("앱 동작과 개인 환경을 관리합니다.", "Manage app behaviour and your personal setup.")}</div>
       </div>
+
+      <Card>
+        <SectionTitle>{t("패치노트", "Patch Notes")}</SectionTitle>
+        <div style={{ fontSize: 12.5, color: theme.textDim, lineHeight: 1.55, marginBottom: 12 }}>
+          {t("이번 웹/PWA 수정 내역과 바탕화면 아이콘 재생성 안내를 확인합니다.", "View the latest web/PWA changes and desktop shortcut reset instructions.")}
+        </div>
+        <a
+          href={PATCH_NOTES_URL}
+          target="_self"
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            minHeight: 38,
+            padding: "0 14px",
+            borderRadius: 2,
+            border: `1px solid ${theme.lift}`,
+            background: tint(theme.lift, 0.12),
+            color: theme.lift,
+            textDecoration: "none",
+            fontSize: 12.5,
+            fontWeight: 750,
+            letterSpacing: "0.08em",
+            textTransform: "uppercase",
+            fontFamily: MONO_FONT_STACK,
+          }}
+        >
+          {t("패치노트 열기", "Open Patch Notes")}
+        </a>
+      </Card>
       <SettingsSectionLabel>{en("일반", "General")}</SettingsSectionLabel>
       <Card>
         <SectionTitle>{en("기본 프로필", "Profile Basics")}</SectionTitle>
@@ -7303,6 +7428,7 @@ export default function App() {
   const [loaded, setLoaded] = useState(false);
   const [showIntroAgain, setShowIntroAgain] = useState(false);
   const [showSettingsSheet, setShowSettingsSheet] = useState(false);
+  const [showStartupPatchNotes, setShowStartupPatchNotes] = useState(false);
   const [tab, setTab] = useState("today");
   const [actInitialView, setActInitialView] = useState(null);
   const [actResetSignal, setActResetSignal] = useState(0);
@@ -7321,15 +7447,17 @@ export default function App() {
   const [err, setErr] = useState(null);
   const [viewportHeight, setViewportHeight] = useState(() => {
     if (typeof window === "undefined") return null;
-    return window.visualViewport?.height || window.innerHeight || null;
+    return Math.ceil(window.visualViewport?.height || window.innerHeight || 0) || null;
   });
 
   useEffect(() => {
     const updateViewportHeight = () => {
-      const h = window.visualViewport?.height || window.innerHeight || null;
+      const h = Math.ceil(window.visualViewport?.height || window.innerHeight || 0) || null;
       if (h) {
         setViewportHeight(h);
         document.documentElement.style.setProperty("--app-viewport-height", `${h}px`);
+        document.documentElement.style.setProperty("--app-safe-top", "env(safe-area-inset-top, 0px)");
+        document.documentElement.style.setProperty("--app-safe-bottom", "env(safe-area-inset-bottom, 0px)");
       }
     };
     updateViewportHeight();
@@ -7377,6 +7505,13 @@ export default function App() {
       setDevDateOffsetDays(s.devDateOffsetDays || 0);
       setHapticsEnabled(s.hapticsEnabled !== false);
       setLoaded(true);
+      try {
+        if (WEB_BUILD && window.localStorage?.getItem(PATCH_NOTES_SEEN_KEY) !== "1") {
+          setShowStartupPatchNotes(true);
+        }
+      } catch (e) {
+        if (WEB_BUILD) setShowStartupPatchNotes(true);
+      }
     })();
   }, []);
 
@@ -7389,6 +7524,25 @@ export default function App() {
   const setWeekPlan = useCallback((v) => { setWeekPlanState(v); saveKey("weekPlan", v).then((ok) => !ok && setErr("저장 실패 / Save failed")); }, []);
   const setDayLogs = useCallback((v) => { setDayLogsState(v); saveKey("dayLogs", v).then((ok) => !ok && setErr("저장 실패 / Save failed")); }, []);
   const saveSettings = useCallback((v) => { setSettings(v); saveKey("settings", v).then((ok) => !ok && setErr("저장 실패 / Save failed")); }, []);
+
+  const markPatchNotesSeen = useCallback(() => {
+    try {
+      window.localStorage?.setItem(PATCH_NOTES_SEEN_KEY, "1");
+    } catch (e) {
+      // ignore localStorage errors
+    }
+    setShowStartupPatchNotes(false);
+  }, []);
+
+  const openPatchNotesFromStartup = useCallback(() => {
+    try {
+      window.localStorage?.setItem(PATCH_NOTES_SEEN_KEY, "1");
+    } catch (e) {
+      // ignore localStorage errors
+    }
+    window.location.href = PATCH_NOTES_URL;
+  }, []);
+
 
   useEffect(() => {
     if (!document.getElementById("hybrid-log-tap-style")) {
@@ -7775,7 +7929,7 @@ export default function App() {
       }} />
     );
     return (
-      <div style={{ background: theme.bg, height: "var(--app-viewport-height, 100vh)", fontFamily: BODY_FONT_STACK, padding: 16, boxSizing: "border-box", display: "flex", flexDirection: "column", gap: 14 }}>
+      <div style={{ background: theme.bg, minHeight: "100dvh", height: "var(--app-viewport-height, 100dvh)", fontFamily: BODY_FONT_STACK, padding: "calc(16px + env(safe-area-inset-top, 0px)) 16px calc(16px + env(safe-area-inset-bottom, 0px))", boxSizing: "border-box", display: "flex", flexDirection: "column", gap: 14 }}>
         <style>{`@media (max-height: 780px) { .today-compact { gap: 9px !important; } .today-compact button { min-height: 0; } }
         @keyframes hlSkeletonPulse { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }`}</style>
         {pulse(20, "40%")}
@@ -7790,6 +7944,14 @@ export default function App() {
     <LangContext.Provider value={lang}>
     <ThemeContext.Provider value={theme}>
     <style>{`
+      html, body, #root { min-height: 100%; background: ${theme.bg}; overscroll-behavior: none; }
+      body { margin: 0; overflow: hidden; }
+      @supports (height: 100dvh) {
+        html, body, #root { min-height: 100dvh; }
+      }
+      @media (display-mode: standalone) {
+        body { background: ${theme.bg}; }
+      }
       .today-compact { overflow: hidden; }
       .today-compact button { min-height: 0; }
       @media (max-height: 860px) {
@@ -7829,11 +7991,13 @@ export default function App() {
     )}
     <div style={{
       background: theme.isDark ? `radial-gradient(circle at -20% 12%, ${tint(theme.progress || theme.run, 0.18)}, transparent 32%), radial-gradient(circle at 110% 10%, ${tint(theme.act || theme.lift, 0.12)}, transparent 30%), ${theme.bg}` : `radial-gradient(circle at -18% 12%, ${tint(theme.progress || theme.run, 0.12)}, transparent 32%), radial-gradient(circle at 112% 5%, ${tint(theme.plan || theme.ring, 0.14)}, transparent 30%), ${theme.bg}`,
-      height: "var(--app-viewport-height, 100vh)", overflow: "hidden", color: theme.text,
+      minHeight: "100dvh", height: "var(--app-viewport-height, 100dvh)", overflow: "hidden", color: theme.text,
       fontFamily: BODY_FONT_STACK, fontWeight: 500,
       display: "flex", flexDirection: "column", position: "relative",
+      paddingTop: "env(safe-area-inset-top, 0px)",
+      boxSizing: "border-box",
     }}>
-      <div style={{ position: "relative", minHeight: 54, padding: "7px 52px 7px 16px", textAlign: "left", background: theme.bg, backdropFilter: "blur(10px)", borderBottom: `1px solid ${theme.border}`, boxShadow: scrolled ? "0 4px 14px rgba(0,0,0,0.07)" : "none", transition: "box-shadow 0.22s ease", zIndex: 5, display: "flex", alignItems: "center", justifyContent: "flex-start", overflow: "hidden" }}>
+      <div style={{ position: "relative", minHeight: 58, padding: "8px 52px 8px 16px", textAlign: "left", background: theme.bg, backdropFilter: "blur(10px)", borderBottom: `1px solid ${theme.border}`, boxShadow: scrolled ? "0 4px 14px rgba(0,0,0,0.07)" : "none", transition: "box-shadow 0.22s ease", zIndex: 5, display: "flex", alignItems: "center", justifyContent: "flex-start", overflow: "visible", flexShrink: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <div style={{ width: 30, height: 30, borderRadius: 8, background: theme.lift, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: `0 6px 16px ${tint(theme.lift, 0.28)}` }}>
             <svg width="20" height="20" viewBox="0 0 512 512" aria-hidden="true">
@@ -7939,13 +8103,20 @@ export default function App() {
         <SettingsTab settings={settings} onSaveSettings={saveSettings} workouts={workouts} nutrition={nutrition} bodycomp={bodycomp} programs={programs} onShowIntro={() => setShowIntroAgain(true)} />
       </SettingsSheet>
 
+      <PatchNotesStartupModal
+        open={showStartupPatchNotes}
+        onDismiss={markPatchNotesSeen}
+        onOpenNotes={openPatchNotesFromStartup}
+      />
+
       <div style={{
         position: "fixed", bottom: 0, left: 0, right: 0,
         background: `linear-gradient(180deg, ${tint(theme.bg, 0.92)}, ${theme.bg})`, backdropFilter: "blur(14px)", borderTop: `1px solid ${theme.border}`,
         display: "flex", justifyContent: "center",
         boxShadow: "0 -12px 28px rgba(0,0,0,0.28)",
+        paddingBottom: "env(safe-area-inset-bottom, 0px)",
       }}>
-        <div style={{ display: "flex", width: "100%", maxWidth: 520, padding: "0 6px env(safe-area-inset-bottom)" }}>
+        <div style={{ display: "flex", width: "100%", maxWidth: 520, padding: "0 6px" }}>
           {tabs.map((tabItem) => {
             const Icon = tabItem.icon;
             const active = tab === tabItem.id;
