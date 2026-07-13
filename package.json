@@ -5,9 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "node scripts/build-web-root.mjs",
     "preview": "vite preview",
-    "android:sync": "vite build && npx cap sync android"
+    "android:sync": "vite build && npx cap sync android",
+    "build:vite": "vite build"
   },
   "dependencies": {
     "@capacitor/android": "^6.2.0",
@@ -29,5 +30,9 @@
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.1",
     "vite": "^5.4.0"
+  },
+  "engines": {
+    "node": ">=24 <25",
+    "npm": ">=10"
   }
 }

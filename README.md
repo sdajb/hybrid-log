@@ -308,3 +308,54 @@ index.dev.html
 ```
 
 For this package, after copying files into the repo, you can push directly. Running `npm run build` is optional unless you are modifying source code again.
+
+## Build Note for Root Deploy
+
+Use:
+
+```bat
+npm run build
+```
+
+This project uses a custom build wrapper:
+
+```text
+scripts/build-web-root.mjs
+```
+
+Why:
+
+- `index.dev.html` is the development/Vite entry.
+- `index.html` at repo root is the production GitHub Pages entry.
+- After building, `dist/` is copied back to repo root so GitHub Pages `/root` deployment works.
+
+Do not replace `index.dev.html` with the production `index.html`.
+
+## GitHub Actions Node Version
+
+GitHub Actions is configured for Node 24.
+
+Workflow file:
+
+```text
+.github/workflows/deploy.yml
+```
+
+The deploy workflow uses:
+
+```yaml
+actions/checkout@v5
+actions/setup-node@v5
+node-version: 24
+actions/upload-pages-artifact@v4
+actions/deploy-pages@v5
+```
+
+The project also includes:
+
+```text
+.nvmrc
+.node-version
+```
+
+Both are set to Node 24.

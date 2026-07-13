@@ -130,6 +130,20 @@ https://sdajb.github.io/hybrid-log/patch-notes-0.14.41/</pre>
     <p>This package copies the production <code>dist</code> build to the repo root as well, so the app works with GitHub Pages configured as <code>Deploy from a branch → main → /root</code>.</p>
     <p>The original development Vite entry is saved as <code>index.dev.html</code>.</p>
 
+
+    <h2>0.14.45 Build-Safe Root Deploy Fix</h2>
+    <p><code>npm run build</code> now uses <code>index.dev.html</code> as the Vite entry, then copies the built <code>dist</code> output back to the repository root.</p>
+    <p>This prevents Vite from trying to rebundle the already-built root <code>index.html</code>.</p>
+
+
+    <h2>0.14.46 GitHub Actions Node 24 Fix</h2>
+    <p>The GitHub Pages workflow now uses Node 24 and updated Pages actions.</p>
+    <pre>actions/checkout@v5
+actions/setup-node@v5
+node-version: 24
+actions/upload-pages-artifact@v4
+actions/deploy-pages@v5</pre>
+
     <h2>Version</h2>
     <pre>Hybrid Log Web 0.14.41
 PWA shortcut and visible patch notes fix</pre>
