@@ -34,3 +34,21 @@ Recommended steps:
 - Set `scope` to `/hybrid-log/`.
 - Fixed icon paths to `/hybrid-log/icon-*.png`.
 - Added visible static patch notes pages in multiple paths.
+
+## 0.14.44 Root Deployment Fix
+
+Patch notes opened but the main app did not open from:
+
+```text
+https://sdajb.github.io/hybrid-log/
+```
+
+That means GitHub Pages was serving the repository root instead of the built `dist` folder.
+
+This package copies the production `dist` build to the repo root as well, so the app works with GitHub Pages set to:
+
+```text
+Deploy from a branch → main → /root
+```
+
+The original development `index.html` has been backed up as `index.dev.html`.

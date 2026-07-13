@@ -124,6 +124,12 @@ https://sdajb.github.io/hybrid-log/patch-notes-0.14.41/</pre>
       <li>Existing browser data should remain, but shortcut metadata may need to be recreated.</li>
     </ul>
 
+
+    <h2>0.14.44 Root Deployment Fix</h2>
+    <p>Patch notes opened but the main app did not open from <code>https://sdajb.github.io/hybrid-log/</code>. This means GitHub Pages was serving the repository root instead of the built <code>dist</code> folder.</p>
+    <p>This package copies the production <code>dist</code> build to the repo root as well, so the app works with GitHub Pages configured as <code>Deploy from a branch → main → /root</code>.</p>
+    <p>The original development Vite entry is saved as <code>index.dev.html</code>.</p>
+
     <h2>Version</h2>
     <pre>Hybrid Log Web 0.14.41
 PWA shortcut and visible patch notes fix</pre>

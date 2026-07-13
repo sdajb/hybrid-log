@@ -288,3 +288,23 @@ Try these after deploy:
 - `https://sdajb.github.io/hybrid-log/patch-notes-0.14.41/`
 
 Important: after the PWA shortcut fix, delete the old desktop/home-screen shortcut and create it again.
+
+## GitHub Pages Deployment Note
+
+This package is root-deploy compatible.
+
+The production `dist/` output has also been copied to the repository root, so the app works when GitHub Pages is configured as:
+
+```text
+Source: Deploy from a branch
+Branch: main
+Folder: /root
+```
+
+The original development Vite HTML entry has been saved as:
+
+```text
+index.dev.html
+```
+
+For this package, after copying files into the repo, you can push directly. Running `npm run build` is optional unless you are modifying source code again.
