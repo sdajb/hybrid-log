@@ -5,27 +5,22 @@ import {
 } from "recharts";
 import {
   Dumbbell, Activity, Utensils, Scale, TrendingUp, Plus, Trash2, X, Footprints, Smile, Clock, Award, BarChart3,
-  Check, Settings2, ChevronRight, ChevronUp, ChevronDown, GripVertical, Flame, Search, Calculator, Pencil,
+  Check, Settings2, ChevronRight, ChevronUp, ChevronDown, GripVertical, Flame, Search, Calculator, Pencil, Moon, BedDouble,
 } from "lucide-react";
 import { Haptics } from "@capacitor/haptics";
 import { LocalNotifications } from "@capacitor/local-notifications";
 import { StatusBar, Style } from "@capacitor/status-bar";
 import { App as CapApp } from "@capacitor/app";
-import { registerPlugin, Capacitor } from "@capacitor/core";
+import { registerPlugin } from "@capacitor/core";
 
 // Our own custom native plugin (Android only — see
 // android/app/src/main/java/.../StepCounterPlugin.java). No npm package;
 // registerPlugin() bridges to it by name. Safely rejects in the browser
 // preview / artifact (no native bridge), which callers below handle.
+const BUILD_RELEASE = "0.14.8";
 const StepCounterPlugin = registerPlugin("StepCounter");
-const isAndroidStepRuntime = () => {
-  try {
-    return Capacitor.isNativePlatform?.() && Capacitor.getPlatform?.() === "android";
-  } catch (e) {
-    return false;
-  }
-};
-
+const RestTimerPlugin = registerPlugin("RestTimer");
+const WEB_BUILD = true;
 
 // Fire-and-forget haptic feedback. No-ops safely in the browser/artifact
 // preview (no native bridge) and on any device without haptics support.
@@ -43,6 +38,45 @@ function haptic() {
   } catch (e) {
     // ignore — not running on a native platform
   }
+}
+
+// Foreground rest-finish sound. The native RestTimerService only rings when the
+// app is backgrounded; in the foreground the JS timer advances first and stops
+// the native timer before its notification fires, so we synthesize the alarm
+// here with Web Audio. getAudioCtx() is also called on user gestures (logging a
+// set) so the context is unlocked by the time the timer completes.
+let __audioCtx = null;
+function getAudioCtx() {
+  if (typeof window === "undefined") return null;
+  try {
+    const Ctor = window.AudioContext || window.webkitAudioContext;
+    if (!Ctor) return null;
+    if (!__audioCtx) __audioCtx = new Ctor();
+    if (__audioCtx.state === "suspended") __audioCtx.resume().catch(() => {});
+    return __audioCtx;
+  } catch (e) { return null; }
+}
+function playRestFinishSound(sound) {
+  if (sound === "vibrate") { haptic(); return; }
+  const ctx = getAudioCtx();
+  if (!ctx) { haptic(); return; }
+  try {
+    const now = ctx.currentTime;
+    const pattern = sound === "buzzer" ? [[196, 0, 0.45]]
+      : sound === "digital" ? [[988, 0, 0.1], [988, 0.16, 0.1], [988, 0.32, 0.14]]
+      : [[660, 0, 0.14], [988, 0.15, 0.28]];
+    const wave = sound === "buzzer" ? "sawtooth" : "sine";
+    pattern.forEach(([freq, t0, dur]) => {
+      const osc = ctx.createOscillator(), gain = ctx.createGain();
+      osc.type = wave; osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.0001, now + t0);
+      gain.gain.exponentialRampToValueAtTime(0.5, now + t0 + 0.015);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + t0 + dur);
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.start(now + t0); osc.stop(now + t0 + dur + 0.03);
+    });
+  } catch (e) { /* ignore */ }
+  haptic();
 }
 
 function blurActiveInput() {
@@ -107,39 +141,66 @@ async function cancelRestTimerNotification() {
   } catch (e) { /* ignore */ }
 }
 
+async function startNativeRestTimer(seconds, sound = "classic") {
+  try {
+    await RestTimerPlugin.start({ seconds: Math.max(1, Math.round(seconds)), sound });
+    return true;
+  } catch (e) {
+    return scheduleRestTimerNotification(seconds, "Rest's over!", "Time for the next set.");
+  }
+}
+async function stopNativeRestTimer() {
+  try { await RestTimerPlugin.stop(); } catch (e) { /* native plugin unavailable */ }
+  await cancelRestTimerNotification();
+}
+async function getNativeRestTimerState() {
+  try { return await RestTimerPlugin.getState(); } catch (e) { return { running: false, endsAt: 0, skipped: false }; }
+}
+
 /* ---------------------------------------------------------
    COLOR PALETTES — clean modern themes. Each has the same shape
    so every component can just do `const theme = useTheme();`
 --------------------------------------------------------- */
+// Monochrome + single amber accent, editorial-athletic direction.
+// Near-black surfaces, one warm amber for every accent/CTA, everything else
+// grayscale. Semantic keys (act/eat/plan/progress/checkin) all collapse to
+// amber so the whole app reads as one accent rather than color-coded tabs.
+const AMBER = "#E6B22E";
+const AMBER_DEEP = "#C8971F";
 const PALETTES = {
   dark: {
     name: "Dark", isDark: true,
-    bg: "#15120E", surface: "#211A14", surfaceRaised: "#2A241E", border: "#3A332D",
-    text: "#F8EFD8", textDim: "#D8CBB2", textFaint: "#A99B86",
-    lift: "#D9A028", run: "#287C8E", rest: "#3A332D", danger: "#C94E2A",
-    gradA: "#D9A028", gradB: "#C94E2A", ring: "#D9A028", heroText: "#15120E", heroTextDim: "#4C3721",
-    act: "#D9A028", eat: "#287C8E", plan: "#C94E2A", progress: "#2C8C9A", checkin: "#C26F6A",
-    cream: "#F3E9D2", cream2: "#F8EFD8", darkPanel: "#1E1A16", darkPanel2: "#2A241E",
-    rust: "#C94E2A", mustard: "#D9A028", teal: "#287C8E", brown: "#2B1F16",
-    stripe: ["#D9A028", "#C94E2A", "#287C8E", "#F3E9D2"],
+    bg: "#0A0A0A", surface: "#121212", surfaceRaised: "#1A1A1A", border: "#292929",
+    text: "#F5F5F3", textDim: "#A8A8A4", textFaint: "#6E6E6A",
+    lift: AMBER, run: "#F5F5F3", rest: "#1A1A1A", danger: "#E5533B",
+    gradA: AMBER, gradB: AMBER_DEEP, ring: AMBER, heroText: "#0A0A0A", heroTextDim: "#3A2E12",
+    act: AMBER, eat: AMBER, plan: AMBER, progress: AMBER, checkin: AMBER,
+    cream: "#F5F5F3", cream2: "#FFFFFF", darkPanel: "#141414", darkPanel2: "#1A1A1A",
+    rust: "#E5533B", mustard: AMBER, teal: "#A8A8A4", brown: "#1A1A1A",
+    stripe: [AMBER, "#F5F5F3", "#6E6E6A", "#292929"],
   },
   light: {
     name: "Light", isDark: false,
-    bg: "#F3E9D2", surface: "#F8EFD8", surfaceRaised: "#EFE0BE", border: "#D4BE91",
-    text: "#1E1A16", textDim: "#5C4A37", textFaint: "#8C765A",
-    lift: "#D9A028", run: "#287C8E", rest: "#E7D5AF", danger: "#C94E2A",
-    gradA: "#D9A028", gradB: "#C94E2A", ring: "#D9A028", heroText: "#15120E", heroTextDim: "#6B4B25",
-    act: "#D9A028", eat: "#287C8E", plan: "#C94E2A", progress: "#2C8C9A", checkin: "#B66A64",
-    cream: "#F3E9D2", cream2: "#F8EFD8", darkPanel: "#EAD7AD", darkPanel2: "#F1E1BB",
-    rust: "#C94E2A", mustard: "#D9A028", teal: "#287C8E", brown: "#2B1F16",
-    stripe: ["#D9A028", "#C94E2A", "#287C8E", "#2B1F16"],
+    bg: "#F4F3F0", surface: "#FFFFFF", surfaceRaised: "#FAFAF8", border: "#DEDDD8",
+    text: "#141414", textDim: "#5C5C58", textFaint: "#8E8E88",
+    lift: AMBER_DEEP, run: "#141414", rest: "#ECEBE6", danger: "#C8401F",
+    gradA: AMBER, gradB: AMBER_DEEP, ring: AMBER_DEEP, heroText: "#0A0A0A", heroTextDim: "#3A2E12",
+    act: AMBER_DEEP, eat: AMBER_DEEP, plan: AMBER_DEEP, progress: AMBER_DEEP, checkin: AMBER_DEEP,
+    cream: "#FFFFFF", cream2: "#FFFFFF", darkPanel: "#ECEBE6", darkPanel2: "#F4F3F0",
+    rust: "#C8401F", mustard: AMBER_DEEP, teal: "#5C5C58", brown: "#141414",
+    stripe: [AMBER_DEEP, "#141414", "#8E8E88", "#DEDDD8"],
   },
 };
 const DEFAULT_PALETTE = "dark";
 
-// Clean modern health dashboard typography: one contemporary sans family across the app.
-const FONT_STACK = "'Inter', 'DM Sans', 'IBM Plex Sans KR', 'Apple SD Gothic Neo', 'Malgun Gothic', system-ui, -apple-system, sans-serif";
-const MASTHEAD_FONT_STACK = FONT_STACK;
+// Editorial-athletic typography system:
+//  - SANS: large numerals, body, UI. Clean grotesque.
+//  - MONO: uppercase context labels ("SET 2 OF 4", "WEIGHT [KG]") — wide tracking.
+//  - SERIF: italic block/section titles ("Development Block: Week 5 of 12").
+const FONT_STACK = "'Inter', 'IBM Plex Sans KR', 'Apple SD Gothic Neo', 'Malgun Gothic', system-ui, -apple-system, sans-serif";
+const MONO_FONT_STACK = "'JetBrains Mono', 'IBM Plex Mono', 'Roboto Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace";
+const SERIF_FONT_STACK = "'Newsreader Variable', 'Newsreader', 'IBM Plex Sans KR', 'Apple SD Gothic Neo', Georgia, serif";
+const MASTHEAD_FONT_STACK = SERIF_FONT_STACK;
 const BODY_FONT_STACK = FONT_STACK;
 
 const ThemeContext = createContext(PALETTES[DEFAULT_PALETTE]);
@@ -198,8 +259,20 @@ function localDateStr(date) {
   return `${y}-${m}-${d}`;
 }
 const todayStr = () => localDateStr(nowDate());
+// Parse a "YYYY-MM-DD" string as LOCAL midnight. Bare `new Date("2025-07-10")`
+// parses as UTC midnight, which is the previous local day in timezones ahead
+// of UTC (e.g. KST) — shifting window filters by a day at the boundary. Passes
+// Date objects and full ISO timestamps through unchanged.
+function parseLocalDate(value) {
+  if (value instanceof Date) return value;
+  if (typeof value === "string") {
+    const m = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  }
+  return new Date(value);
+}
 const fmtDate = (d) => {
-  const dt = new Date(d + "T00:00:00");
+  const dt = parseLocalDate(d);
   return `${dt.getMonth() + 1}/${dt.getDate()}`;
 };
 
@@ -215,7 +288,10 @@ const LangContext = createContext("ko");
 function useLang() {
   const lang = useContext(LangContext);
   const t = (ko, en) => (lang === "en" ? en : ko);
-  return { lang, t };
+  // Always-English helper for editorial section labels / mono uppercase
+  // "instrument labels", which stay English regardless of UI language.
+  const en = (_ko, enStr) => enStr;
+  return { lang, t, en };
 }
 
 const WEEKDAY_LABELS = {
@@ -228,11 +304,11 @@ const WEEKDAY_LABELS = {
 function computeObservedTdee(bodycomp, nutrition, windowDays) {
   const cutoff = nowDate();
   cutoff.setDate(cutoff.getDate() - windowDays);
-  const bc = [...bodycomp].filter((b) => new Date(b.date) >= cutoff).sort((a, b) => a.date.localeCompare(b.date));
-  const nu = nutrition.filter((n) => new Date(n.date) >= cutoff);
+  const bc = [...bodycomp].filter((b) => parseLocalDate(b.date) >= cutoff).sort((a, b) => a.date.localeCompare(b.date));
+  const nu = nutrition.filter((n) => parseLocalDate(n.date) >= cutoff);
   if (bc.length < 2 || nu.length < 3) return null;
   const first = bc[0], last = bc[bc.length - 1];
-  const days = (new Date(last.date) - new Date(first.date)) / 86400000;
+  const days = (parseLocalDate(last.date) - parseLocalDate(first.date)) / 86400000;
   if (days < 3) return null;
   const weightChange = last.weight - first.weight;
   const dailyTotals = {};
@@ -305,7 +381,7 @@ function proposeActivityLevelChange(t, settings, recentAvgSteps, lastProposalDat
     return { eligible: false, note: t("최근 완료된 날의 걸음수 기록이 더 필요해요.", "Need more completed days of step history first.") };
   }
   if (lastProposalDateStr) {
-    const daysSince = (nowDate() - new Date(lastProposalDateStr + "T00:00:00")) / 86400000;
+    const daysSince = (nowDate() - parseLocalDate(lastProposalDateStr)) / 86400000;
     if (daysSince < 7) {
       return { eligible: false, note: t("다음 확인은 7일 주기로 떠요.", "The next check-in is on a 7-day cycle.") };
     }
@@ -345,7 +421,7 @@ function metForWorkout(w) {
 function weeklyNetExerciseKcal(workouts, weightKg, windowDays = 14) {
   const cutoff = nowDate();
   cutoff.setDate(cutoff.getDate() - windowDays);
-  const recent = workouts.filter((w) => new Date(w.date) >= cutoff && (getDurationMin(w) || 0) > 0);
+  const recent = workouts.filter((w) => parseLocalDate(w.date) >= cutoff && (getDurationMin(w) || 0) > 0);
   const totalKcal = recent.reduce((sum, w) => {
     const netMet = Math.max(0, metForWorkout(w) - 1);
     const hours = (getDurationMin(w) || 0) / 60;
@@ -354,12 +430,27 @@ function weeklyNetExerciseKcal(workouts, weightKg, windowDays = 14) {
   return totalKcal / (windowDays / 7); // normalized to a weekly average
 }
 
-function computeInitialTdee(settings, currentWeight, workouts, recentAvgSteps) {
-  if (!settings.ageYears || !settings.heightCm || !currentWeight) return null;
-  const bmr = bmrMifflin(settings.sex || "male", settings.ageYears, settings.heightCm, currentWeight);
-  const nonExercise = bmr * resolveActivityFactor(settings, recentAvgSteps);
+function computeInitialTdee(settings, currentWeight, workouts, recentAvgSteps, currentBodyFat = null) {
+  if (!currentWeight) return null;
+  let bmr = null;
+  let bmrMethod = "weight_fallback";
+  if (settings.ageYears && settings.heightCm) {
+    bmr = bmrMifflin(settings.sex || "male", settings.ageYears, settings.heightCm, currentWeight);
+    bmrMethod = "mifflin";
+  } else {
+    const ffm = fatFreeMassKg(currentWeight, currentBodyFat ?? settings.startBF);
+    if (ffm != null) {
+      bmr = 370 + 21.6 * ffm;
+      bmrMethod = "katch_mcardle";
+    } else {
+      bmr = currentWeight * (settings.sex === "female" ? 21 : 22);
+      bmrMethod = "weight_fallback";
+    }
+  }
+  const activityFactorValue = resolveActivityFactor(settings, recentAvgSteps);
+  const nonExercise = bmr * activityFactorValue;
   const exerciseKcal = weeklyNetExerciseKcal(workouts, currentWeight) / 7;
-  return { bmr, tdee: nonExercise + exerciseKcal };
+  return { bmr, tdee: nonExercise + exerciseKcal, bmrMethod, activityFactor: activityFactorValue };
 }
 
 // Blend the model-based initial estimate with an observed estimate from two
@@ -368,8 +459,8 @@ function computeInitialTdee(settings, currentWeight, workouts, recentAvgSteps) {
 function calibrateTdee(initialTdee, bodycomp, nutrition, windowDays = 14) {
   const cutoff = nowDate();
   cutoff.setDate(cutoff.getDate() - windowDays);
-  const bc = [...bodycomp].filter((b) => new Date(b.date) >= cutoff).sort((a, b) => a.date.localeCompare(b.date));
-  const nu = nutrition.filter((n) => new Date(n.date) >= cutoff);
+  const bc = [...bodycomp].filter((b) => parseLocalDate(b.date) >= cutoff).sort((a, b) => a.date.localeCompare(b.date));
+  const nu = nutrition.filter((n) => parseLocalDate(n.date) >= cutoff);
   const dailyTotals = {};
   nu.forEach((n) => { dailyTotals[n.date] = (dailyTotals[n.date] || 0) + (+n.calories || 0); });
   const loggedDays = Object.keys(dailyTotals).length;
@@ -377,8 +468,8 @@ function calibrateTdee(initialTdee, bodycomp, nutrition, windowDays = 14) {
 
   const mid = new Date(cutoff);
   mid.setDate(mid.getDate() + windowDays / 2);
-  const firstHalf = bc.filter((b) => new Date(b.date) < mid);
-  const secondHalf = bc.filter((b) => new Date(b.date) >= mid);
+  const firstHalf = bc.filter((b) => parseLocalDate(b.date) < mid);
+  const secondHalf = bc.filter((b) => parseLocalDate(b.date) >= mid);
   if (firstHalf.length === 0 || secondHalf.length === 0) return { eligible: false };
 
   const avg = (arr) => arr.reduce((s, b) => s + b.weight, 0) / arr.length;
@@ -413,7 +504,7 @@ const MAX_TDEE_CHANGE_PER_ACCEPTANCE = 150;
 function proposeTdeeCalibration(t, currentTdee, bodycomp, nutrition, lastAcceptedDateStr) {
   const today = nowDate();
   if (lastAcceptedDateStr) {
-    const daysSinceAccepted = (today - new Date(lastAcceptedDateStr + "T00:00:00")) / 86400000;
+    const daysSinceAccepted = (today - parseLocalDate(lastAcceptedDateStr)) / 86400000;
     if (daysSinceAccepted < 7) {
       return { eligible: false, note: t("최근 보정을 승인한 지 7일이 지나야 다음 제안이 나와요.", "Wait at least 7 days after the last accepted calibration before the next proposal.") };
     }
@@ -424,7 +515,7 @@ function proposeTdeeCalibration(t, currentTdee, bodycomp, nutrition, lastAccepte
 
   const byDate = {};
   nutrition.forEach((n) => {
-    if (new Date(n.date) < cutoff) return;
+    if (parseLocalDate(n.date) < cutoff) return;
     if (!byDate[n.date]) byDate[n.date] = { cal: 0, qSum: 0, qCount: 0 };
     byDate[n.date].cal += (+n.calories || 0);
     byDate[n.date].qSum += (n.quality ?? 0.8);
@@ -434,7 +525,7 @@ function proposeTdeeCalibration(t, currentTdee, bodycomp, nutrition, lastAccepte
   const reliableIntake = intakeDays.filter((d) => d.quality >= MIN_INTAKE_QUALITY);
   const meanQuality = reliableIntake.length ? reliableIntake.reduce((s, d) => s + d.quality, 0) / reliableIntake.length : 0;
 
-  const fastedWeights = bodycomp.filter((b) => new Date(b.date) >= cutoff && (b.condition ?? "unknown") === "fasted");
+  const fastedWeights = bodycomp.filter((b) => parseLocalDate(b.date) >= cutoff && (b.condition ?? "unknown") === "fasted");
 
   if (reliableIntake.length < MIN_COMPLETE_INTAKE_DAYS || fastedWeights.length < MIN_FASTED_WEIGHT_DAYS || meanQuality < MIN_INTAKE_QUALITY) {
     return {
@@ -450,7 +541,7 @@ function proposeTdeeCalibration(t, currentTdee, bodycomp, nutrition, lastAccepte
   }
 
   const meanIntake = reliableIntake.reduce((s, d) => s + d.cal, 0) / reliableIntake.length;
-  const points = fastedWeights.map((b) => [new Date(b.date).getTime() / 86400000, b.weight]);
+  const points = fastedWeights.map((b) => [parseLocalDate(b.date).getTime() / 86400000, b.weight]);
   const xMean = points.reduce((s, p) => s + p[0], 0) / points.length;
   const yMean = points.reduce((s, p) => s + p[1], 0) / points.length;
   const num = points.reduce((s, p) => s + (p[0] - xMean) * (p[1] - yMean), 0);
@@ -486,17 +577,36 @@ function proposeTdeeCalibration(t, currentTdee, bodycomp, nutrition, lastAccepte
 // Fat-loss deficit: requested rate, but clamped to sane bounds (200-900 kcal,
 // never more than 30% of TDEE) so an aggressive rate% on a heavy bodyweight
 // can't produce an unreasonably large default deficit.
-function dailyTargetForRate(tdee, weightKg, weeklyChangeFraction, bmr, sex) {
+// Single source of truth for a cut target + all safety clamps. Returns the
+// target plus enough detail (the applied deficit, which bound bit, and the
+// resulting real weekly rate) that callers never re-derive the floor logic —
+// keeping every screen's number and its on-screen explanation in sync.
+function computeCutTarget(tdee, weightKg, weeklyChangeFraction, bmr, sex) {
   const requestedDeficit = (weightKg * weeklyChangeFraction * KCAL_PER_KG) / 7;
-  const deficit = Math.min(Math.max(requestedDeficit, 200), Math.min(900, tdee * 0.30));
-  const rawTarget = tdee - deficit;
-  // Hard floor — not just a warning after the fact. Never recommend eating
-  // below BMR, and never below a widely-cited clinical minimum (1200 kcal
-  // female / 1500 kcal male) even if BMR itself is lower than that for a
-  // smaller person — these are independent safety floors.
+  // Upper caps only (900 kcal + 30%-of-TDEE) keep an aggressive rate% on a
+  // heavy bodyweight safe. No lower floor on the deficit — a gentle tier must
+  // stay gentle rather than being silently bumped up to a minimum. The BMR /
+  // clinical floor below still protects the downside.
+  const cappedDeficit = Math.min(Math.max(requestedDeficit, 0), 900, tdee * 0.30);
   const clinicalFloor = sex === "female" ? 1200 : 1500;
-  const floor = bmr != null ? Math.max(bmr, clinicalFloor) : clinicalFloor;
-  return Math.max(rawTarget, floor);
+  const floorVal = Math.max(clinicalFloor, Number(bmr) || 0);
+  const rawTarget = tdee - cappedDeficit;
+  const target = Math.max(rawTarget, floorVal);
+  const appliedDeficit = tdee - target;
+  const effectiveRateFrac = weightKg > 0 ? (appliedDeficit * 7) / KCAL_PER_KG / weightKg : 0;
+  return {
+    target,
+    requestedDeficit,
+    appliedDeficit,
+    floorVal,
+    effectiveRateFrac,
+    flooredByIntake: rawTarget < floorVal - 0.5,           // clamped up to the intake floor
+    deficitCapped: cappedDeficit < requestedDeficit - 0.5, // 900 / 30%-of-TDEE cap bit first
+  };
+}
+// Thin wrapper for callers that only need the number.
+function dailyTargetForRate(tdee, weightKg, weeklyChangeFraction, bmr, sex) {
+  return computeCutTarget(tdee, weightKg, weeklyChangeFraction, bmr, sex).target;
 }
 
 // Lean-gain surplus: conservative by design, capped at 100-300 kcal and
@@ -521,11 +631,53 @@ function cycleTargets(baseDailyTargetKcal, trainingDaysPerWeek, trainingDayExtra
 
 // Cheat/refeed day budget: keeps the planned weekly calorie total unchanged
 // by borrowing from the other days, capped at 120% of TDEE.
-function specialDayBudget(tdeeKcal, normalDailyTargetKcal, specialDaysPerWeek = 1) {
+function specialDayBudget(tdeeKcal, normalDailyTargetKcal, specialDaysPerWeek = 1, bmr = 0, sex = "male") {
   const weeklyBudget = normalDailyTargetKcal * 7;
-  const normalDays = 7 - specialDaysPerWeek;
-  const raw = (weeklyBudget - normalDailyTargetKcal * normalDays) / specialDaysPerWeek;
-  return Math.min(raw, tdeeKcal * 1.20);
+  const desiredSpecial = Math.min(normalDailyTargetKcal + 500, tdeeKcal * 1.10);
+  const clinicalFloor = sex === "female" ? 1200 : 1500;
+  const normalFloor = Math.max(clinicalFloor, Number(bmr) || 0);
+  const normalDays = Math.max(1, 7 - specialDaysPerWeek);
+  const maxSpecialFromFloor = weeklyBudget - normalFloor * normalDays;
+  const special = Math.max(normalDailyTargetKcal, Math.min(desiredSpecial, maxSpecialFromFloor));
+  const normal = (weeklyBudget - special * specialDaysPerWeek) / normalDays;
+  return { special: Math.round(special), normal: Math.round(normal) };
+}
+
+function weekStartKey(date = nowDate()) {
+  const d = parseLocalDate(date);
+  const day = (d.getDay() + 6) % 7;
+  d.setDate(d.getDate() - day);
+  return localDateStr(d);
+}
+function applyCheatDayTarget(settings, activeTarget, effectiveTdee, bmr) {
+  if (!activeTarget || !effectiveTdee || activeTarget.mode !== "cut") return activeTarget;
+  const currentWeek = weekStartKey();
+  if (settings.cheatDayUsedWeekKey !== currentWeek || !settings.cheatDayUsedDate) return activeTarget;
+  const budget = specialDayBudget(effectiveTdee, activeTarget.target, 1, bmr, settings.sex);
+  const isCheat = settings.cheatDayActive && settings.cheatDayUsedDate === todayStr();
+  return { ...activeTarget, target: isCheat ? budget.special : budget.normal, cheatDay: isCheat, cheatBudget: budget, normalTarget: activeTarget.target };
+}
+function shouldReclaimUnusedCheatDay(settings, nutrition, normalTarget, date = todayStr()) {
+  if (!settings?.cheatDayActive) return false;
+  if (settings.cheatDayUsedDate !== date) return false;
+  if (settings.cheatDayUsedWeekKey !== weekStartKey(parseLocalDate(date))) return false;
+  const normal = Number(normalTarget);
+  if (!Number.isFinite(normal) || normal <= 0) return false;
+  const consumed = (nutrition || [])
+    .filter((n) => n.date === date)
+    .reduce((sum, n) => sum + (+n.calories || 0), 0);
+  return consumed <= normal + 0.5;
+}
+function reclaimCheatDaySettings(settings) {
+  return {
+    ...settings,
+    cheatDayEnabled: false,
+    cheatDayActive: false,
+    cheatDayWeekKey: "",
+    cheatDayDate: "",
+    cheatDayUsedWeekKey: "",
+    cheatDayUsedDate: "",
+  };
 }
 
 // Reverse-diet / maintenance ramp: nudges a below-maintenance target back up
@@ -549,7 +701,10 @@ function proteinTarget(sex, weightKg, bodyFatPercent) {
   return 1.8 * weightKg;
 }
 
-function macrosFor(targetKcal, weightKg, sex, bodyFatPercent, carbPercent = null) {
+function macrosFor(rawTargetKcal, weightKg, sex, bodyFatPercent, carbPercent = null) {
+  // Compute macros against the same rounded target the UI shows, so the macro
+  // breakdown and the displayed calorie number stay consistent.
+  const targetKcal = Math.round(rawTargetKcal);
   const proteinG = proteinTarget(sex, weightKg, bodyFatPercent);
   if (carbPercent != null) {
     // user-set carb ratio: protein stays FFM/weight-based, carbs come straight
@@ -596,7 +751,10 @@ function recommendedLossRateRange(sex, bodyFatPercent) {
   return [0.0040, 0.0075];
 }
 
-function computeActiveTarget(settings, effectiveTdee, currentWeight, currentBF) {
+// `bmr` is the engine's best BMR estimate (Mifflin → Katch-McArdle → weight
+// fallback) — passed in by every caller so the intake floor is identical on
+// every screen, rather than each screen re-deriving its own.
+function computeActiveTarget(settings, effectiveTdee, currentWeight, currentBF, bmr = null) {
   if (!effectiveTdee || !currentWeight) return null;
   const mode = settings.goalMode || "cut";
   const carbPercent = settings.carbPercent ?? null;
@@ -606,9 +764,9 @@ function computeActiveTarget(settings, effectiveTdee, currentWeight, currentBF) 
     // DietEngineV3's safetyWarnings REVIEW_REQUIRED gate for pregnancy/
     // breastfeeding and ED-recovery/clinical-restriction contexts.
     const macros = macrosFor(effectiveTdee, currentWeight, settings.sex, currentBF, carbPercent);
-    return { mode, tierKey: null, target: effectiveTdee, macros, blocked: true };
+    return { mode, tierKey: null, target: effectiveTdee, macros, blocked: true, floorInfo: null };
   }
-  let target, tierKey, tierDef;
+  let target, tierKey, tierDef, floorInfo = null;
   if (mode === "gain") {
     tierKey = settings.gainTier || "lean";
     tierDef = GAIN_TIERS[tierKey] || GAIN_TIERS.lean;
@@ -619,13 +777,12 @@ function computeActiveTarget(settings, effectiveTdee, currentWeight, currentBF) 
   } else {
     tierKey = settings.cutTier || "standard";
     tierDef = CUT_TIERS[tierKey] || CUT_TIERS.standard;
-    const bmr = (settings.ageYears && settings.heightCm && currentWeight)
-      ? bmrMifflin(settings.sex || "male", settings.ageYears, settings.heightCm, currentWeight)
-      : null;
-    target = dailyTargetForRate(effectiveTdee, currentWeight, tierDef.frac, bmr, settings.sex);
+    const cut = computeCutTarget(effectiveTdee, currentWeight, tierDef.frac, bmr, settings.sex);
+    target = cut.target;
+    floorInfo = cut;
   }
   const macros = macrosFor(target, currentWeight, settings.sex, currentBF, carbPercent);
-  return { mode, tierKey, target, macros, blocked: false };
+  return { mode, tierKey, target, macros, blocked: false, floorInfo };
 }
 
 function dietEngineWarnings(t, { tdee, bmr, targetKcal, ffmKg, exerciseKcalPerDay, macros, weeklyChangeFraction, bmi, goalMode }) {
@@ -654,11 +811,21 @@ function dietEngineWarnings(t, { tdee, bmr, targetKcal, ffmKg, exerciseKcalPerDa
 }
 
 function estimateTdeeEngine(settings, bodycomp, nutrition, workouts, currentWeight, recentAvgSteps) {
-  const initial = computeInitialTdee(settings, currentWeight, workouts, recentAvgSteps);
+  const initial = computeInitialTdee(settings, currentWeight, workouts, recentAvgSteps, bodycomp?.slice?.().sort((a, b) => String(a.date || "").localeCompare(String(b.date || ""))).at?.(-1)?.bodyfat ?? settings.startBF ?? null);
   if (!initial) return null;
   const calib = calibrateTdee(initial.tdee, bodycomp, nutrition, 14);
   const effectiveTdee = calib.eligible ? calib.blendedTdee : initial.tdee;
-  return { bmr: initial.bmr, initialTdee: initial.tdee, calibration: calib, effectiveTdee };
+  return { bmr: initial.bmr, bmrMethod: initial.bmrMethod, activityFactor: initial.activityFactor, initialTdee: initial.tdee, calibration: calib, effectiveTdee };
+}
+
+// The TDEE that targets are computed from — shared by every screen so they
+// never disagree. Deliberately the accepted (or model) baseline rounded to
+// 10 kcal, NOT engine.effectiveTdee's auto-blended observed value: targets
+// shouldn't drift day to day from logged data alone. A calibration only takes
+// effect once the user explicitly accepts it (settings.acceptedTdee).
+function targetTdee(settings, engine) {
+  if (!engine) return null;
+  return settings.acceptedTdee ?? Math.round(engine.initialTdee / 10) * 10;
 }
 
 // Week plan is now user-editable (day -> lift program / run type / rest).
@@ -673,6 +840,67 @@ const DEFAULT_WEEK_PLAN = [
   { day: "토", kind: "rest" },
   { day: "일", kind: "rest" },
 ];
+
+function weekPlanIndexForDate(dateKey) {
+  const d = parseLocalDate(dateKey);
+  return (d.getDay() + 6) % 7; // Mon=0
+}
+function getPlannedDay(dateKey, weekPlan) {
+  const idx = weekPlanIndexForDate(dateKey);
+  return weekPlan?.[idx] || { kind: "rest" };
+}
+function hasCheckinData(entry) {
+  return !!entry && (!!entry.mood || !!entry.energy || !!entry.sleep || !!String(entry.note || "").trim());
+}
+function hasRestCredit(entry) {
+  return !!entry?.restCompleted;
+}
+function planWorkoutComplete(dateKey, plan, workouts, programs = []) {
+  if (!plan || plan.kind === "rest") return false;
+  return (workouts || []).some((w) => {
+    if (w.date !== dateKey) return false;
+    if (plan.kind === "lift") {
+      const program = programs.find((p) => p.id === plan.programId);
+      return w.type === "lift" && (w.programId === plan.programId || (program?.name && w.subtype === program.name));
+    }
+    if (plan.kind === "run") {
+      return w.type === "run" && (!plan.runLabel || w.subtype === plan.runLabel);
+    }
+    return false;
+  });
+}
+function consistencyCompleteForDate(dateKey, weekPlan, workouts, dayLogs, programs = []) {
+  const plan = getPlannedDay(dateKey, weekPlan);
+  const log = (dayLogs || []).find((d) => d.date === dateKey);
+  if (plan.kind === "rest") return hasRestCredit(log) || hasCheckinData(log);
+  return planWorkoutComplete(dateKey, plan, workouts, programs);
+}
+function calcConsistencyStreak(weekPlan, workouts, dayLogs, programs = []) {
+  let count = 0;
+  const cursor = nowDate();
+  let key = localDateStr(cursor);
+  if (!consistencyCompleteForDate(key, weekPlan, workouts, dayLogs, programs)) {
+    cursor.setDate(cursor.getDate() - 1);
+    key = localDateStr(cursor);
+  }
+  while (consistencyCompleteForDate(key, weekPlan, workouts, dayLogs, programs)) {
+    count++;
+    cursor.setDate(cursor.getDate() - 1);
+    key = localDateStr(cursor);
+  }
+  return count;
+}
+function calcWorkoutStreak(workouts) {
+  const workoutDays = new Set((workouts || []).filter((w) => w.type === "lift" || w.type === "run").map((w) => w.date));
+  let count = 0;
+  const cursor = nowDate();
+  if (!workoutDays.has(localDateStr(cursor))) cursor.setDate(cursor.getDate() - 1);
+  while (workoutDays.has(localDateStr(cursor))) {
+    count++;
+    cursor.setDate(cursor.getDate() - 1);
+  }
+  return count;
+}
 
 // Per-100g macros. Values are standard reference nutrition data (the same
 // USDA-derived figures sites like nutritionvalue.org display), not a live
@@ -729,28 +957,28 @@ const DEFAULT_PROGRAMS = [
   {
     id: "push", name: "Push",
     exercises: [
-      { name: "인클라인/플랫 덤벨 프레스", nameEn: "Incline / Flat DB Press", sets: 2, repRange: "6-12", muscle: "chest" },
-      { name: "시티드 덤벨 숄더 프레스", nameEn: "Seated DB Shoulder Press", sets: 2, repRange: "6-12", muscle: "shoulders" },
-      { name: "딥스 (웨이트/머신)", nameEn: "Dips (Weighted / Machine)", sets: 2, repRange: "6-12", muscle: "triceps" },
-      { name: "펙덱 또는 케이블 플라이", nameEn: "Pec Deck or Cable Fly", sets: 2, repRange: "6-12", muscle: "chest" },
+      { id: "ex_1", name: "인클라인/플랫 덤벨 프레스", nameEn: "Incline / Flat DB Press", sets: 2, repRange: "6-12", muscle: "chest", warmupSets: 1 },
+      { id: "ex_2", name: "시티드 덤벨 숄더 프레스", nameEn: "Seated DB Shoulder Press", sets: 2, repRange: "6-12", muscle: "shoulders", warmupSets: 1 },
+      { id: "ex_3", name: "딥스 (웨이트/머신)", nameEn: "Dips (Weighted / Machine)", sets: 2, repRange: "6-12", muscle: "triceps", warmupSets: 1 },
+      { id: "ex_4", name: "펙덱 또는 케이블 플라이", nameEn: "Pec Deck or Cable Fly", sets: 2, repRange: "6-12", muscle: "chest", warmupSets: 1 },
     ],
   },
   {
     id: "legs", name: "Legs",
     exercises: [
-      { name: "스쿼트", nameEn: "Squats", sets: 3, repRange: "4-6", muscle: "quads" },
-      { name: "RDL (바벨/덤벨)", nameEn: "RDL (Barbell / DB)", sets: 2, repRange: "8-10", muscle: "hamstrings" },
-      { name: "덤벨 런지", nameEn: "DB Lunges", sets: 2, repRange: "8-12", muscle: "quads" },
-      { name: "카프 레이즈", nameEn: "Calf Raises", sets: 2, repRange: "8-12", muscle: "calves" },
+      { id: "ex_5", name: "스쿼트", nameEn: "Squats", sets: 3, repRange: "4-6", muscle: "quads", warmupSets: 1 },
+      { id: "ex_6", name: "RDL (바벨/덤벨)", nameEn: "RDL (Barbell / DB)", sets: 2, repRange: "8-10", muscle: "hamstrings", warmupSets: 1 },
+      { id: "ex_7", name: "덤벨 런지", nameEn: "DB Lunges", sets: 2, repRange: "8-12", muscle: "quads", warmupSets: 1 },
+      { id: "ex_8", name: "카프 레이즈", nameEn: "Calf Raises", sets: 2, repRange: "8-12", muscle: "calves", warmupSets: 1 },
     ],
   },
   {
     id: "pull", name: "Pull",
     exercises: [
-      { name: "덤벨/바벨 로우", nameEn: "DB / BB Row", sets: 2, repRange: "6-12", muscle: "back" },
-      { name: "풀업 또는 랫 풀다운", nameEn: "Pull-Ups or Lat Pulldown", sets: 2, repRange: "6-12", muscle: "back" },
-      { name: "바벨 바이셉 컬", nameEn: "BB Biceps Curls", sets: 2, repRange: "8-10", muscle: "biceps" },
-      { name: "랫 풀오버", nameEn: "Lat Pullover", sets: 2, repRange: "10-12", muscle: "back" },
+      { id: "ex_9", name: "덤벨/바벨 로우", nameEn: "DB / BB Row", sets: 2, repRange: "6-12", muscle: "back", warmupSets: 1 },
+      { id: "ex_10", name: "풀업 또는 랫 풀다운", nameEn: "Pull-Ups or Lat Pulldown", sets: 2, repRange: "6-12", muscle: "back", warmupSets: 1 },
+      { id: "ex_11", name: "바벨 바이셉 컬", nameEn: "BB Biceps Curls", sets: 2, repRange: "8-10", muscle: "biceps", warmupSets: 1 },
+      { id: "ex_12", name: "랫 풀오버", nameEn: "Lat Pullover", sets: 2, repRange: "10-12", muscle: "back", warmupSets: 1 },
     ],
   },
 ];
@@ -786,15 +1014,39 @@ function parseRepRange(repRange) {
 function poStateKey(programId, exerciseName) {
   return `${programId}::${exerciseName}`;
 }
+const GUIDE_SETTINGS_KEY = "__guideSettings";
+function guideSettingsKey(program) {
+  return String(program?.id || program?.name || "default");
+}
+async function loadGuideSettings(program) {
+  const stored = await loadKey("progressiveOverload", {});
+  return stored?.[GUIDE_SETTINGS_KEY]?.[guideSettingsKey(program)] || null;
+}
+async function saveGuideSettings(program, settings) {
+  const stored = await loadKey("progressiveOverload", {});
+  const all = stored?.[GUIDE_SETTINGS_KEY] || {};
+  await saveKey("progressiveOverload", {
+    ...(stored || {}),
+    [GUIDE_SETTINGS_KEY]: {
+      ...all,
+      [guideSettingsKey(program)]: {
+        ...(all[guideSettingsKey(program)] || {}),
+        ...settings,
+        updatedAt: new Date().toISOString(),
+      },
+    },
+  });
+}
 
-// This week's target rep count for the top/working sets: starts at
-// startReps and climbs by 1 per calendar week since the current cycle
-// began, capped at maxReps — matching "매주 하나씩 올리기" (increase by
-// one rep every week) up to the ceiling.
+// Target rep count for the top/working sets. Session-based progression:
+// starts at startReps and climbs by exactly 1 each time the exercise is
+// completed in a guided session, capped at maxReps — matching "한 세션에
+// 하나씩 올리기" (increase by one rep per session). Using a stored
+// session counter (not elapsed calendar time) means a long layoff never
+// makes the target jump several reps at once on the return session.
 function currentTargetReps(poEntry, startReps, maxReps) {
-  if (!poEntry || !poEntry.cycleStart) return startReps;
-  const weeksSince = Math.floor((nowDate() - new Date(poEntry.cycleStart + "T00:00:00")) / (7 * 86400000));
-  return Math.min(maxReps, startReps + Math.max(0, weeksSince));
+  const step = Math.max(0, poEntry?.sessionsAtWeight ?? 0);
+  return Math.min(maxReps, startReps + step);
 }
 
 
@@ -803,7 +1055,7 @@ const makeExercisesFromPlan = (planExercises, lang) => {
   if (!planExercises) return [];
   return planExercises.map((ex) => ({
     name: lang === "en" && ex.nameEn ? ex.nameEn : ex.name, repRange: ex.repRange, muscle: ex.muscle || null,
-    sets: Array.from({ length: Math.max(1, Math.round(Number(ex.sets)) || 1) }, () => ({ weight: "", reps: "" })),
+    sets: Array.from({ length: Math.max(1, Math.round(Number(ex.sets)) || 1) }, () => ({ weight: "", reps: "", setType: "working" })),
   }));
 };
 
@@ -825,6 +1077,13 @@ const DEFAULT_SETTINGS = {
   dailyReminderHour: 20,
   dailyReminderMinute: 0,
   hapticsEnabled: true,
+  restTimerSound: "classic",
+  cheatDayEnabled: false,
+  cheatDayActive: false,
+  cheatDayWeekKey: "",
+  cheatDayDate: "",
+  cheatDayUsedWeekKey: "",
+  cheatDayUsedDate: "",
   pregnantOrBreastfeeding: false,
   edRecoveryOrClinical: false,
   acceptedTdee: null,
@@ -840,8 +1099,6 @@ const DEFAULT_SETTINGS = {
   startDate: todayStr(),
   startWeight: 0,
   startBF: 0,
-  startBFSource: "none",
-  startBFConfidence: "none",
   goalWeightLow: 0,
   goalWeightHigh: 0,
   goalBFLow: 0,
@@ -866,91 +1123,6 @@ const GREETINGS = [
   (name) => `Steady hands, ${name}`,
   (name) => `Today counts too, ${name}`,
 ];
-
-const APP_VERSION = "0.3.0";
-const PATCH_NOTES = [
-  {
-    version: "0.3.0",
-    date: "2026-07-09",
-    titleKo: "체지방 추정과 스와이프 개선",
-    titleEn: "Body fat estimate and swipe polish",
-    itemsKo: [
-      "체지방률을 모를 때 눈대중 5단계로 시작할 수 있게 했습니다.",
-      "체지방 직접 입력/추정/건너뛰기 흐름을 추가했습니다.",
-      "추정 체지방값에는 추정 배지를 표시합니다.",
-      "iOS 웹앱 가로 스와이프 중 세로로 밀리는 현상을 줄였습니다.",
-      "패치노트 기능을 추가했습니다.",
-    ],
-    itemsEn: [
-      "Added a 5-step visual body-fat estimate for users who do not know their body-fat percentage.",
-      "Added manual / estimate / skip flows for body-fat setup.",
-      "Estimated body-fat values now show an estimate badge.",
-      "Reduced vertical drift while swiping tabs in the iOS web app.",
-      "Added patch notes.",
-    ],
-  },
-];
-
-const BODY_FAT_ESTIMATE_OPTIONS = [
-  { id: "lean", value: 13, labelKo: "마른 편", labelEn: "Lean", descKo: "복근/윤곽이 꽤 보임", descEn: "Abs or definition visible" },
-  { id: "fit", value: 17, labelKo: "운동한 평균", labelEn: "Fit average", descKo: "복근은 약하지만 허리선 있음", descEn: "Some waist shape, less definition" },
-  { id: "average", value: 22, labelKo: "평균적", labelEn: "Average", descKo: "배가 약간 있고 일반적인 체형", descEn: "Some belly, common build" },
-  { id: "soft", value: 27, labelKo: "배가 있는 편", labelEn: "Softer", descKo: "복부 지방이 확실히 보임", descEn: "Belly fat clearly visible" },
-  { id: "high", value: 33, labelKo: "높은 편", labelEn: "Higher", descKo: "비만에 가까운 체형", descEn: "Closer to obese range" },
-];
-
-function getBodyFatSourceMeta(source, t) {
-  if (source === "visual_estimate") return { label: t("눈대중 추정", "Visual estimate"), confidence: t("낮은 신뢰도", "Low confidence") };
-  if (source === "measurement_formula") return { label: t("치수 추정", "Measurement estimate"), confidence: t("중간 신뢰도", "Medium confidence") };
-  if (source === "manual") return { label: t("직접 입력", "Manual"), confidence: t("높은 신뢰도", "High confidence") };
-  return { label: t("미입력", "Not set"), confidence: "" };
-}
-
-function BodyFatSourceBadge({ source }) {
-  const { t } = useLang();
-  const theme = useTheme();
-  if (!source || source === "manual") return null;
-  const meta = getBodyFatSourceMeta(source, t);
-  return (
-    <span style={{
-      display: "inline-flex", alignItems: "center", marginLeft: 6, padding: "2px 6px",
-      borderRadius: 999, border: `1px solid ${tint(theme.plan || theme.ring, 0.42)}`,
-      background: tint(theme.plan || theme.ring, 0.14), color: theme.textDim,
-      fontSize: 10.5, fontWeight: 800, verticalAlign: "middle",
-    }}>
-      {meta.label}
-    </span>
-  );
-}
-
-function BodyFatEstimateSelector({ value, onSelect, compact = false }) {
-  const { t } = useLang();
-  const theme = useTheme();
-  const current = value ? Number(value) : null;
-  return (
-    <div style={{ display: "grid", gridTemplateColumns: compact ? "1fr" : "1fr", gap: 6 }}>
-      {BODY_FAT_ESTIMATE_OPTIONS.map((opt) => {
-        const active = current === opt.value;
-        return (
-          <button key={opt.id} type="button" onClick={() => onSelect(opt.value)}
-            style={{
-              width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
-              padding: compact ? "8px 10px" : "9px 10px", borderRadius: 12, cursor: "pointer",
-              border: `1px solid ${active ? (theme.plan || theme.ring) : theme.border}`,
-              background: active ? tint(theme.plan || theme.ring, 0.16) : "transparent",
-              color: theme.text, textAlign: "left",
-            }}>
-            <span style={{ minWidth: 0 }}>
-              <span style={{ display: "block", fontSize: 12.5, fontWeight: 850 }}>{t(opt.labelKo, opt.labelEn)} · {opt.value}%</span>
-              <span style={{ display: "block", fontSize: 11, color: theme.textFaint, marginTop: 2, lineHeight: 1.35 }}>{t(opt.descKo, opt.descEn)}</span>
-            </span>
-            {active && <Check size={14} color={theme.plan || theme.ring} />}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
 
 /* ---------------------------------------------------------
    STORAGE HELPERS
@@ -980,10 +1152,90 @@ async function deleteKey(key) {
     // ignore — key may not exist
   }
 }
-const STORAGE_VERSION = 4;
-const ALL_STORAGE_KEYS = ["settings", "bodycomp", "workouts", "nutrition", "tdeeHistory", "customFoods", "programs", "weekPlan", "dayLogs", "guidedSessionDraft", "workoutDraft", "runSessionDraft"];
+const STORAGE_VERSION = 6;
+const ALL_STORAGE_KEYS = [
+  "settings", "bodycomp", "workouts", "nutrition", "tdeeHistory", "customFoods",
+  "programs", "weekPlan", "dayLogs", "guidedSessionDraft", "workoutDraft", "runSessionDraft",
+  "progressiveOverload", "restTimerSound", "stepBaseline", "stepHistory", "storageVersion",
+];
 async function resetAllData() {
   await Promise.all(ALL_STORAGE_KEYS.map((k) => deleteKey(k)));
+}
+
+async function collectBackupData() {
+  const data = {};
+  await Promise.all(ALL_STORAGE_KEYS.map(async (key) => {
+    data[key] = await loadKey(key, null);
+  }));
+  return {
+    app: "Hybrid Log",
+    backupSchemaVersion: 1,
+    storageVersion: STORAGE_VERSION,
+    exportedAt: new Date().toISOString(),
+    data,
+  };
+}
+async function copyTextToClipboard(text) {
+  try {
+    if (navigator?.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch (e) {
+    // fallback below
+  }
+  try {
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.setAttribute("readonly", "");
+    area.style.position = "fixed";
+    area.style.left = "-9999px";
+    document.body.appendChild(area);
+    area.select();
+    const ok = document.execCommand("copy");
+    area.remove();
+    return !!ok;
+  } catch (e) {
+    return false;
+  }
+}
+async function shareJsonBackup(text, filename) {
+  try {
+    const file = new File([text], filename, { type: "application/json" });
+    if (navigator?.canShare?.({ files: [file] }) && navigator?.share) {
+      await navigator.share({ files: [file], title: filename, text: "Hybrid Log backup" });
+      return true;
+    }
+  } catch (e) {
+    // continue to download fallback
+  }
+  try {
+    const blob = new Blob([text], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1200);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+async function restoreBackupPayload(payload) {
+  const data = payload?.data && typeof payload.data === "object" ? payload.data : payload;
+  if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("Invalid backup file");
+  await Promise.all(ALL_STORAGE_KEYS.map(async (key) => {
+    if (Object.prototype.hasOwnProperty.call(data, key)) {
+      if (data[key] == null) await deleteKey(key);
+      else await saveKey(key, data[key]);
+    } else {
+      await deleteKey(key);
+    }
+  }));
+  await saveKey("storageVersion", STORAGE_VERSION);
 }
 
 function migrateSettings(raw) {
@@ -992,23 +1244,100 @@ function migrateSettings(raw) {
   if (!s.colorPalette || !PALETTES[s.colorPalette]) s.colorPalette = DEFAULT_PALETTE;
   if (!s.goalMode) s.goalMode = "cut";
   if (!s.activityLevel) s.activityLevel = "low";
-  if (s.startBF && !s.startBFSource) s.startBFSource = "manual";
-  if (!s.startBFSource) s.startBFSource = s.startBF ? "manual" : "none";
-  if (!s.startBFConfidence) s.startBFConfidence = s.startBFSource === "manual" ? "high" : s.startBFSource === "visual_estimate" ? "low" : "none";
+  if (!s.cheatDayUsedWeekKey && s.cheatDayWeekKey && s.cheatDayDate) s.cheatDayUsedWeekKey = s.cheatDayWeekKey;
+  if (!s.cheatDayUsedDate && s.cheatDayDate) s.cheatDayUsedDate = s.cheatDayDate;
+  if (typeof s.cheatDayActive !== "boolean") s.cheatDayActive = !!s.cheatDayEnabled;
   s.storageVersion = STORAGE_VERSION;
   return s;
 }
 function migrateWorkoutEntry(w) {
-  return { exercises: [], notes: "", duration: "", distance: "", hr: "", ...w, date: w?.date || todayStr(), type: w?.type || "lift", subtype: w?.subtype || "기타" };
+  const base = { exercises: [], notes: "", duration: "", distance: "", hr: "", ...w, date: w?.date || todayStr(), type: w?.type || "lift", subtype: w?.subtype || "기타" };
+  return {
+    ...base,
+    exercises: (base.exercises || []).map((ex) => ({
+      ...ex,
+      id: ex?.id || ex?.exerciseId || uid(),
+      exerciseId: ex?.exerciseId || ex?.id || null,
+      sets: (ex?.sets || []).map((set, index) => ({
+        ...set,
+        setType: set?.setType || "working",
+        targetReps: set?.targetReps ?? null,
+        setNumber: set?.setType === "warmup" ? null : (set?.setNumber ?? index + 1),
+      })),
+    })),
+  };
+}
+
+function migratePrograms(programs) {
+  return (programs || DEFAULT_PROGRAMS).map((program) => ({
+    ...program,
+    id: program?.id || uid(),
+    exercises: (program?.exercises || []).map((ex) => ({
+      ...ex,
+      id: ex?.id || uid(),
+      warmupSets: Math.max(0, Math.min(5, Number(ex?.warmupSets ?? 1))),
+      sets: Math.max(1, Number(ex?.sets ?? 2)),
+      repRange: ex?.repRange || "6-12",
+    })),
+  }));
+}
+const MEAL_CATEGORIES = ["breakfast", "lunch", "dinner", "snack", "other"];
+function inferMealCategory(value) {
+  const raw = String(value || "").trim().toLowerCase();
+  if (!raw) return "other";
+  if (["breakfast", "아침", "morning"].some((x) => raw.includes(x))) return "breakfast";
+  if (["lunch", "점심", "brunch"].some((x) => raw.includes(x))) return "lunch";
+  if (["dinner", "저녁", "evening", "supper"].some((x) => raw.includes(x))) return "dinner";
+  if (["snack", "간식", "dessert", "디저트"].some((x) => raw.includes(x))) return "snack";
+  if (MEAL_CATEGORIES.includes(raw)) return raw;
+  return "other";
+}
+function mealCategoryLabel(id, t) {
+  return {
+    breakfast: t("아침", "Breakfast"),
+    lunch: t("점심", "Lunch"),
+    dinner: t("저녁", "Dinner"),
+    snack: t("간식", "Snack"),
+    other: t("기타", "Other"),
+  }[id] || t("기타", "Other");
+}
+function mealCategoryOrder(id) {
+  const idx = MEAL_CATEGORIES.indexOf(id);
+  return idx >= 0 ? idx : MEAL_CATEGORIES.length;
+}
+function groupedNutritionItems(items) {
+  const map = {};
+  (items || []).forEach((item) => {
+    const cat = item.mealCategory || inferMealCategory(item.meal);
+    if (!map[cat]) map[cat] = [];
+    map[cat].push(item);
+  });
+  return Object.entries(map).sort((a, b) => mealCategoryOrder(a[0]) - mealCategoryOrder(b[0]));
+}
+function mealCategoryCount(items) {
+  return groupedNutritionItems(items).length;
 }
 function migrateNutritionEntry(n) {
-  return { meal: "", calories: "", protein: "", carbs: "", fat: "", quality: null, ...n, date: n?.date || todayStr() };
+  const originalMeal = n?.meal || "";
+  const hasExplicitCategory = !!n?.mealCategory;
+  const inferred = hasExplicitCategory ? n.mealCategory : inferMealCategory(originalMeal);
+  const keepName = hasExplicitCategory || inferred === "other" ? originalMeal : "";
+  return {
+    mealCategory: inferred,
+    meal: keepName,
+    calories: "",
+    protein: "",
+    carbs: "",
+    fat: "",
+    quality: null,
+    ...n,
+    mealCategory: n?.mealCategory || inferred,
+    meal: n?.meal ?? keepName,
+    date: n?.date || todayStr(),
+  };
 }
 function migrateBodyEntry(b) {
-  const bodyfat = b?.bodyfat ?? null;
-  const source = b?.bodyfatSource || (bodyfat != null ? "manual" : "none");
-  const confidence = b?.bodyfatConfidence || (source === "manual" ? "high" : source === "visual_estimate" ? "low" : "none");
-  return { ...b, date: b?.date || todayStr(), bodyfatSource: source, bodyfatConfidence: confidence };
+  return { ...b, date: b?.date || todayStr() };
 }
 async function runStorageMigrations() {
   const current = await loadKey("storageVersion", 0);
@@ -1017,11 +1346,13 @@ async function runStorageMigrations() {
   const workouts = (await loadKey("workouts", []) || []).map(migrateWorkoutEntry);
   const nutrition = (await loadKey("nutrition", []) || []).map(migrateNutritionEntry);
   const bodycomp = (await loadKey("bodycomp", []) || []).map(migrateBodyEntry);
+  const programs = migratePrograms(await loadKey("programs", DEFAULT_PROGRAMS));
   await Promise.all([
     saveKey("settings", settings),
     saveKey("workouts", workouts),
     saveKey("nutrition", nutrition),
     saveKey("bodycomp", bodycomp),
+    saveKey("programs", programs),
     saveKey("storageVersion", STORAGE_VERSION),
   ]);
 }
@@ -1180,29 +1511,40 @@ function Card({ children, style, variant = "info", accent, ...rest }) {
   const theme = useTheme();
   const isFeature = variant === "feature";
   const isQuiet = variant === "quiet";
+  const isBare = variant === "bare"; // no top rule (for standalone/nested use)
   const accentColor = accent || theme.ring;
-  const padding = style?.padding ?? 16;
-  const bg = isFeature
-    ? `linear-gradient(135deg, ${tint(accentColor, theme.isDark ? 0.26 : 0.16)}, ${theme.darkPanel2 || theme.surface})`
-    : (isQuiet
-      ? `linear-gradient(135deg, ${theme.darkPanel2 || theme.surfaceRaised}, ${theme.darkPanel || theme.surface})`
-      : `linear-gradient(135deg, ${theme.surfaceRaised}, ${theme.surface})`);
+  // Editorial spread: sections are NOT boxes. Each section is delineated by a
+  // single hairline rule at the top and generous vertical breathing room, so
+  // the type hierarchy — not card chrome — carries the structure. The feature
+  // variant swaps the neutral rule for an amber one to draw the eye; quiet
+  // keeps a fainter rule for secondary/supporting blocks.
+  const {
+    padding: padOverride, background: bgOverride, border: borderOverride,
+    borderRadius: radiusOverride, marginTop, marginBottom, ...restStyle
+  } = style || {};
+  const ruleColor = isFeature ? accentColor : (isQuiet ? theme.border : theme.border);
+  const ruleWeight = isFeature ? 2 : 1;
   return (
     <div
       style={{
         position: "relative",
-        background: bg,
-        border: `1px solid ${isFeature ? tint(accentColor, 0.42) : tint(theme.border, 0.96)}`,
-        borderRadius: 18,
-        padding,
+        paddingTop: isBare ? 0 : 16,
+        paddingBottom: 2,
+        borderTop: isBare ? "none" : `${ruleWeight}px solid ${ruleColor}`,
+        marginTop: marginTop ?? 0,
+        marginBottom: marginBottom ?? 0,
         boxSizing: "border-box",
-        boxShadow: theme.isDark ? `0 12px 26px rgba(0,0,0,0.32)` : `0 12px 30px ${tint(theme.text, 0.075)}`,
-        overflow: "hidden",
-        ...style,
+        ...restStyle,
       }}
       {...rest}
     >{children}</div>
   );
+}
+
+// A hairline horizontal rule for editorial section separation.
+function RuleLine({ style }) {
+  const theme = useTheme();
+  return <div style={{ height: 1, background: theme.border, width: "100%", ...style }} />;
 }
 
 
@@ -1234,18 +1576,20 @@ function RetroArc({ corner = "left", size = 160, style }) {
 
 function ScreenHeader({ eyebrow, title, subtitle, color, children }) {
   const theme = useTheme();
-  const c = color || theme.ring;
   return (
-    <div style={{ position: "relative", overflow: "hidden", padding: "2px 2px 3px" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+    <div style={{ position: "relative", padding: "2px 2px 0" }}>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
         <div>
-          {eyebrow && <div style={{ fontSize: 11, fontWeight: 900, letterSpacing: "0.16em", textTransform: "uppercase", color: c, marginBottom: 6 }}>{eyebrow}</div>}
-          <div style={{ fontSize: 28, fontWeight: 950, letterSpacing: "-0.04em", lineHeight: 1.0, color: theme.text, textTransform: "none" }}>{title}</div>
-          {subtitle && <div style={{ fontSize: 12.5, color: theme.textDim, marginTop: 8, lineHeight: 1.45 }}>{subtitle}</div>}
+          {eyebrow && <div style={{ fontSize: 10.5, fontWeight: 500, letterSpacing: "0.22em", textTransform: "uppercase", color: theme.textFaint, marginBottom: 9, fontFamily: MONO_FONT_STACK }}>{eyebrow}</div>}
+          <div style={{ fontSize: 36, fontWeight: 500, fontStyle: "italic", letterSpacing: "-0.015em", lineHeight: 0.98, color: theme.text, fontFamily: SERIF_FONT_STACK }}>{title}</div>
+          {subtitle && <div style={{ fontSize: 12.5, color: theme.textDim, marginTop: 11, lineHeight: 1.45 }}>{subtitle}</div>}
         </div>
         {children}
       </div>
-      <RetroStripe style={{ marginTop: 12, maxWidth: 236, boxShadow: `0 0 0 1px ${tint(c, 0.16)}` }} height={5} />
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 15 }}>
+        <div style={{ height: 2, width: 40, background: theme.lift, borderRadius: 1 }} />
+        <div style={{ height: 1, flex: 1, background: theme.border }} />
+      </div>
     </div>
   );
 }
@@ -1272,8 +1616,8 @@ function ProgressLine({ value = 0, color, style }) {
 function SectionLabel({ children, right }) {
   const theme = useTheme();
   return (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, margin: "8px 2px 10px" }}>
-      <div style={{ fontSize: 15, lineHeight: 1.25, fontWeight: 750, letterSpacing: "-0.02em", color: theme.text }}>{children}</div>
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, margin: "8px 2px 12px" }}>
+      <div style={{ fontSize: 11.5, lineHeight: 1.3, fontWeight: 600, letterSpacing: "0.13em", textTransform: "uppercase", color: theme.textDim, fontFamily: MONO_FONT_STACK }}>{children}</div>
       {right}
     </div>
   );
@@ -1283,7 +1627,7 @@ function StatusCallout({ tone = "info", children, style }) {
   const theme = useTheme();
   const color = tone === "danger" ? theme.danger : tone === "run" ? theme.run : tone === "lift" ? theme.lift : theme.ring;
   return (
-    <div style={{ border: `1px solid ${tint(color, 0.38)}`, background: `linear-gradient(135deg, ${tint(color, 0.16)}, ${theme.darkPanel || theme.surface})`, borderRadius: 14, padding: "11px 12px", color: theme.text, fontSize: 13, lineHeight: 1.5, ...style }}>{children}</div>
+    <div style={{ borderLeft: `2px solid ${color}`, background: "transparent", padding: "4px 0 4px 12px", color: theme.text, fontSize: 13, lineHeight: 1.5, ...style }}>{children}</div>
   );
 }
 
@@ -1305,7 +1649,7 @@ function Field({ label, children }) {
 const getInputStyle = (theme) => ({
   background: theme.isDark ? (theme.darkPanel || theme.surfaceRaised) : "#FFF9EC",
   border: `1px solid ${tint(theme.border, theme.isDark ? 1 : 0.9)}`,
-  borderRadius: 12,
+  borderRadius: 2,
   padding: "12px 12px",
   color: theme.text,
   fontSize: 14,
@@ -1406,7 +1750,7 @@ function Select({ children, value, onChange, style, disabled, placeholder, ...pr
           overflowY: "auto",
           background: `linear-gradient(180deg, ${theme.darkPanel2 || theme.surfaceRaised}, ${theme.darkPanel || theme.surface})`,
           border: `1px solid ${tint(theme.ring, 0.34)}`,
-          borderRadius: 14,
+          borderRadius: 2,
           boxShadow: "0 18px 46px rgba(0,0,0,0.45)",
           padding: 6,
           boxSizing: "border-box",
@@ -1426,8 +1770,8 @@ function Select({ children, value, onChange, style, disabled, placeholder, ...pr
                 width: "100%",
                 minHeight: 42,
                 border: `1px solid ${active ? tint(theme.ring, 0.42) : "transparent"}`,
-                borderRadius: 11,
-                background: active ? `linear-gradient(135deg, ${tint(theme.ring, 0.20)}, ${theme.darkPanel2 || theme.surfaceRaised})` : "transparent",
+                borderRadius: 2,
+                background: active ? tint(theme.ring, 0.14) : "transparent",
                 color: active ? theme.ring : theme.text,
                 opacity: opt.disabled ? 0.45 : 1,
                 display: "flex",
@@ -1485,6 +1829,24 @@ function Select({ children, value, onChange, style, disabled, placeholder, ...pr
   );
 }
 
+// Flat segmented toggle: square 2px corners, no gradient. Selected = amber
+// fill with near-black text; unselected = hairline outline. Used for all
+// segmented controls so they read as one flat editorial system.
+function FlatToggle({ selected, onClick, children, style }) {
+  const theme = useTheme();
+  return (
+    <button onClick={onClick} style={{
+      flex: 1, minHeight: 46, borderRadius: 2, cursor: "pointer",
+      border: `1px solid ${selected ? theme.lift : theme.border}`,
+      background: selected ? theme.lift : "transparent",
+      color: selected ? (theme.heroText || "#0A0A0A") : theme.textDim,
+      fontSize: 12, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase",
+      fontFamily: MONO_FONT_STACK,
+      ...style,
+    }}>{children}</button>
+  );
+}
+
 function PrimaryButton({ children, onClick, style, disabled }) {
   const theme = useTheme();
   const [pressed, setPressed] = useState(false);
@@ -1500,22 +1862,25 @@ function PrimaryButton({ children, onClick, style, disabled }) {
       onTouchEnd={release}
       onTouchCancel={release}
       style={{
-        background: `linear-gradient(135deg, ${theme.gradA}, ${theme.gradB})`,
-        color: theme.heroText || "#15120E",
-        border: `1px solid ${tint(theme.gradB, 0.42)}`,
-        borderRadius: 14,
-        minHeight: 50,
+        background: disabled ? theme.surfaceRaised : theme.lift,
+        color: disabled ? theme.textFaint : (theme.heroText || "#0A0A0A"),
+        border: "none",
+        borderRadius: 2,
+        minHeight: 52,
         padding: "12px 18px",
-        fontSize: 14,
-        fontWeight: 850,
+        fontSize: 12.5,
+        fontWeight: 700,
+        letterSpacing: "0.12em",
+        textTransform: "uppercase",
+        fontFamily: MONO_FONT_STACK,
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        gap: 6,
+        gap: 8,
         cursor: disabled ? "not-allowed" : "pointer",
-        opacity: disabled ? 0.5 : 1,
+        opacity: disabled ? 0.6 : 1,
         width: "100%",
-        transform: pressed ? "scale(0.97)" : "scale(1)",
+        transform: pressed ? "scale(0.985)" : "scale(1)",
         transition: "transform 0.12s ease",
         ...style,
       }}
@@ -1527,7 +1892,7 @@ function PrimaryButton({ children, onClick, style, disabled }) {
 
 function IconBtn({ onClick, children, danger, label }) {
   const theme = useTheme();
-  const { t } = useLang();
+  const { t, en } = useLang();
   return (
     <button
       onClick={onClick}
@@ -1595,90 +1960,151 @@ function ProgressRing({ pct, size = 128, stroke = 10, color, trackColor, label, 
 
 
 function getLatestBodyComp(bodycomp, settings = {}) {
-  const sorted = [...(bodycomp || [])].sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
-  const latest = sorted[sorted.length - 1] || null;
-  const bodyfat = latest?.bodyfat ?? settings.startBF ?? null;
-  const bodyfatSource = latest?.bodyfat != null ? (latest.bodyfatSource || "manual") : (settings.startBFSource || (settings.startBF ? "manual" : "none"));
+  const entries = bodycomp || [];
+  const latestDate = entries.reduce((max, item) => String(item?.date || "") > max ? String(item.date) : max, "");
+  // New body entries are prepended, so the first entry on the latest date is the newest same-day value.
+  const latest = latestDate ? entries.find((item) => String(item?.date || "") === latestDate) : null;
   return {
     latest,
     weight: latest?.weight ?? settings.startWeight ?? null,
-    bodyfat,
-    bodyfatSource,
+    bodyfat: latest?.bodyfat ?? settings.startBF ?? null,
   };
 }
 
 function MiniMetric({ label, value, sub, color, icon, onClick, spark = false }) {
   const theme = useTheme();
   const c = color || theme.ring;
-  const dark = theme.heroText || "#17120E";
-  const muted = theme.heroTextDim || "#5F4933";
   const content = (
     <>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, marginBottom: 7 }}>
-        <span style={{ color: muted, fontSize: 11.5, fontWeight: 850, letterSpacing: "0.04em", textTransform: "uppercase" }}>{label}</span>
-        {icon && <span style={{ width: 28, height: 28, borderRadius: 999, background: tint(c, 0.18), color: c, display: "grid", placeItems: "center", border: `1px solid ${tint(c, 0.28)}` }}>{icon}</span>}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, marginBottom: 8 }}>
+        <span style={{ color: theme.textFaint, fontSize: 10.5, fontWeight: 600, letterSpacing: "0.14em", textTransform: "uppercase", fontFamily: MONO_FONT_STACK }}>{label}</span>
+        {icon && <span style={{ color: c, display: "grid", placeItems: "center", opacity: 0.9 }}>{icon}</span>}
       </div>
-      <div style={{ color: dark, fontSize: 22, fontWeight: 900, lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>{value}</div>
-      {sub && <div style={{ color: muted, fontSize: 11, marginTop: 5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{sub}</div>}
+      <div style={{ color: theme.text, fontSize: 26, fontWeight: 800, lineHeight: 1, fontVariantNumeric: "tabular-nums", letterSpacing: "-0.01em" }}>{value}</div>
+      {sub && <div style={{ color: theme.textFaint, fontSize: 10.5, marginTop: 6, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", fontFamily: MONO_FONT_STACK, letterSpacing: "0.04em", textTransform: "uppercase" }}>{sub}</div>}
       {spark && <MiniBarSpark color={c} />}
     </>
   );
-  const common = { flex: 1, minWidth: 0, background: `linear-gradient(180deg, ${theme.cream2 || '#F8EFD8'}, ${theme.cream || '#F3E9D2'})`, border: `1px solid ${tint(c, 0.28)}`, borderRadius: 16, padding: "11px 10px 10px", boxShadow: "0 8px 18px rgba(0,0,0,0.16)", boxSizing: "border-box" };
+  const common = { flex: 1, minWidth: 0, background: "transparent", borderTop: `1px solid ${theme.border}`, paddingTop: 11, boxSizing: "border-box" };
   if (onClick) {
-    return <button onClick={onClick} style={{ ...common, textAlign: "left", cursor: "pointer", color: dark }}>{content}</button>;
+    return <button onClick={onClick} style={{ ...common, textAlign: "left", cursor: "pointer", border: "none", borderTop: `1px solid ${theme.border}`, color: theme.text }}>{content}</button>;
   }
   return <div style={common}>{content}</div>;
 }
 
 function IntentCard({ title, body, color, icon, onClick }) {
   const theme = useTheme();
-  const darkText = theme.isDark ? theme.text : "#102033";
   return (
-    <button onClick={onClick} style={{ width: "100%", border: `1px solid ${tint(color, 0.42)}`, background: `linear-gradient(135deg, ${tint(color, theme.isDark ? 0.24 : 0.76)}, ${theme.darkPanel || tint(color, 0.52)})`, borderRadius: 18, padding: "15px 16px", textAlign: "left", cursor: "pointer", color: theme.text, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, minHeight: 86, boxShadow: theme.isDark ? `0 12px 26px rgba(0,0,0,0.25)` : `0 10px 24px ${tint(color, 0.18)}` }}>
-      <div style={{ minWidth: 0 }}>
-        <div style={{ fontSize: 19, fontWeight: 900, letterSpacing: "-0.035em", lineHeight: 1 }}>{title}</div>
-        <div style={{ fontSize: 12.5, color: theme.isDark ? theme.textDim : tint("#102033", 0.72), marginTop: 5, lineHeight: 1.35 }}>{body}</div>
+    <button onClick={onClick} style={{ width: "100%", border: "none", borderTop: `1px solid ${theme.border}`, background: "transparent", padding: "16px 2px", textAlign: "left", cursor: "pointer", color: theme.text, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14 }}>
+      <div style={{ minWidth: 0, display: "flex", alignItems: "baseline", gap: 12 }}>
+        <div style={{ fontSize: 22, fontWeight: 500, fontStyle: "italic", letterSpacing: "-0.01em", lineHeight: 1, fontFamily: SERIF_FONT_STACK, color: theme.text }}>{title}</div>
+        <div style={{ fontSize: 12, color: theme.textDim, lineHeight: 1.35 }}>{body}</div>
       </div>
-      <div style={{ width: 42, height: 42, borderRadius: 15, background: tint("#FFFFFF", 0.66), color, display: "grid", placeItems: "center", flexShrink: 0 }}>{icon}</div>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
+        <span style={{ color: theme.textFaint }}>{icon}</span>
+        <ChevronRight size={16} color={theme.textFaint} />
+      </div>
     </button>
   );
 }
 
-function TodayTab({ settings, bodycomp, recentAvgSteps, currentSteps, stepTrackingEnabled, goToTab, openActView, workouts, nutrition, dayLogs }) {
-  const { t } = useLang();
+function TodayTab({ settings, bodycomp, recentAvgSteps, currentSteps, goToTab, openActView, workouts, nutrition, dayLogs, setDayLogs, weekPlan, programs }) {
+  const { t, en } = useLang();
   const theme = useTheme();
   const { weight, bodyfat } = getLatestBodyComp(bodycomp, settings);
   const engine = estimateTdeeEngine(settings, bodycomp, nutrition, workouts, weight, recentAvgSteps);
-  const effectiveTdee = settings.acceptedTdee ?? engine?.effectiveTdee ?? null;
-  const activeTarget = effectiveTdee ? computeActiveTarget(settings, effectiveTdee, weight, bodyfat) : null;
+  const effectiveTdee = targetTdee(settings, engine);
+  const baseActiveTarget = effectiveTdee ? computeActiveTarget(settings, effectiveTdee, weight, bodyfat, engine?.bmr) : null;
+  const activeTarget = applyCheatDayTarget(settings, baseActiveTarget, effectiveTdee, engine?.bmr);
   const target = activeTarget?.target ?? null;
   const goalLabel = settings.goalMode === "gain" ? t("증량", "Gain") : settings.goalMode === "maintain" ? t("유지", "Maintain") : t("감량", "Cut");
   const [stepsOpen, setStepsOpen] = useState(false);
   const stepsValue = currentSteps != null ? Math.round(currentSteps).toLocaleString() : "—";
   const avgStepsLabel = recentAvgSteps != null ? Math.round(recentAvgSteps).toLocaleString() : t("데이터 없음", "No data yet");
-  const actColor = theme.act || "#F76B55";
-  const eatColor = theme.eat || "#8DAE7F";
-  const planColor = theme.plan || "#F5B942";
-  const progressColor = theme.progress || "#6EA7D6";
-  const displayName = settings.userName && settings.userName !== "USERNAME" ? settings.userName : "Jinwoo";
-  const [greeting] = useState(() => GREETINGS[Math.floor(Math.random() * GREETINGS.length)](displayName));
 
   const today = todayStr();
+  const todayLog = dayLogs.find((d) => d.date === today);
   const loggedWorkout = workouts.some((w) => w.date === today);
   const loggedMeal = nutrition.some((n) => n.date === today);
-  const loggedCheckin = dayLogs.some((d) => d.date === today);
+  const loggedCheckin = hasCheckinData(todayLog);
+  const restCompleted = hasRestCredit(todayLog);
   const mealsToday = nutrition.filter((n) => n.date === today);
+  const mealGroupsToday = mealCategoryCount(mealsToday);
   const calsToday = mealsToday.reduce((s, n) => s + (+n.calories || 0), 0);
+  const remaining = target != null ? Math.round(target - calsToday) : null;
 
+  const consistencyStreak = useMemo(
+    () => calcConsistencyStreak(weekPlan, workouts, dayLogs, programs),
+    [weekPlan, workouts, dayLogs, programs]
+  );
+  const workoutStreak = useMemo(
+    () => calcWorkoutStreak(workouts),
+    [workouts]
+  );
+
+  // next planned workout from this week's plan
+  const nextWorkout = useMemo(() => {
+    if (!weekPlan?.length) return null;
+    const dow = (nowDate().getDay() + 6) % 7; // Mon=0
+    for (let i = 0; i < 7; i++) {
+      const d = weekPlan[(dow + i) % 7];
+      if (d && d.kind !== "rest") {
+        const label = d.kind === "lift" ? (programs?.find((p) => p.id === d.programId)?.name || "Lift") : (d.runLabel === "L.R" ? "Long Run" : d.runLabel === "S.R" ? "Short Run" : "Run");
+        return i === 0 ? label : label;
+      }
+    }
+    return "Rest";
+  }, [weekPlan, programs]);
+
+  // today's planned session (mirrors ActTab) for the home session block
+  const todayIdx = (nowDate().getDay() + 6) % 7; // Mon=0
+  const todayPlan = weekPlan?.[todayIdx];
+  const todayProgram = todayPlan?.kind === "lift" ? (programs?.find((p) => p.id === todayPlan.programId) || null) : null;
+  const todayIsRun = todayPlan?.kind === "run";
+  const sessionLabel = todayProgram ? todayProgram.name : todayIsRun ? (todayPlan.runLabel === "L.R" ? "Long Run" : todayPlan.runLabel === "S.R" ? "Short Run" : "Run") : t("휴식", "Rest");
+  const sessionExCount = todayProgram?.exercises?.length || 0;
+  const isRestDay = !todayProgram && !todayIsRun;
+  const plannedSessionComplete = workouts.some((w) => {
+    if (w.date !== today) return false;
+    if (todayProgram) return w.type === "lift" && (w.programId === todayProgram.id || w.subtype === todayProgram.name);
+    if (todayIsRun) return w.type === "run" && (!todayPlan.runLabel || w.subtype === todayPlan.runLabel);
+    return false;
+  });
+  const completeRestDay = () => {
+    const entry = {
+      ...(todayLog || {}),
+      id: todayLog?.id || uid(),
+      date: today,
+      restCompleted: true,
+      restCompletedAt: new Date().toISOString(),
+    };
+    setDayLogs([entry, ...dayLogs.filter((d) => d.date !== today)]);
+  };
   const statusItems = [
-    { done: loggedWorkout, label: t("오늘 운동 기록", "Workout logged today"), action: () => openActView("training"), color: actColor },
-    { done: loggedMeal, label: loggedMeal ? t(`오늘 ${mealsToday.length}끼 · ${Math.round(calsToday)}kcal`, `${mealsToday.length} meals · ${Math.round(calsToday)}kcal today`) : t("아직 식사 기록 없음", "No meals logged yet"), action: () => goToTab("eat"), color: eatColor },
-    { done: loggedCheckin, label: t("오늘 체크인 완료", "Check-in complete"), action: () => openActView("checkin"), color: planColor },
+    isRestDay
+      ? { done: restCompleted, label: restCompleted ? t("휴식 완료 · consistency 유지", "Rest complete · consistency kept") : t("휴식 완료 필요", "Rest confirmation needed"), action: completeRestDay }
+      : { done: plannedSessionComplete, label: plannedSessionComplete ? t("오늘 운동 완료", "Workout complete") : t("오늘 운동 기록", "Workout pending"), action: () => openActView(todayIsRun ? "cardio" : "training") },
+    { done: loggedMeal, label: loggedMeal ? t(`오늘 ${mealGroupsToday}끼 · 아이템 ${mealsToday.length}개 · ${Math.round(calsToday)}kcal`, `${mealGroupsToday} meals · ${mealsToday.length} items · ${Math.round(calsToday)}kcal`) : t("아직 식사 기록 없음", "No meals logged"), action: () => goToTab("eat") },
+    { done: loggedCheckin, label: loggedCheckin ? t("오늘 체크인 완료", "Check-in complete") : t("체크인 미완료", "Check-in pending"), action: () => openActView("checkin") },
   ];
 
+  const cells = [
+    { label: "WEIGHT", value: weight ? `${Number(weight).toFixed(1)}` : "—", unit: weight ? "kg" : "", onClick: () => openActView("body") },
+    { label: "CONSIST", value: consistencyStreak > 0 ? `${consistencyStreak}` : "—", unit: consistencyStreak > 0 ? "d" : "", onClick: () => openActView(isRestDay ? "checkin" : "training") },
+    { label: "WORKOUT", value: workoutStreak > 0 ? `${workoutStreak}` : "—", unit: workoutStreak > 0 ? "d" : "", onClick: () => openActView("training") },
+  ];
+  const stepSuccessColor = "#46A89A";
+
+  // steps progress
+  const STEPS_GOAL = 10000;
+  const stepsNum = currentSteps != null ? Math.round(currentSteps) : null;
+  const stepGoalHit = stepsNum != null && stepsNum >= STEPS_GOAL;
+  const stepsPct = stepsNum != null ? Math.min(100, (stepsNum / STEPS_GOAL) * 100) : 0;
+  const calPct = target ? Math.min(100, (calsToday / Math.max(1, target)) * 100) : 0;
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      {stepTrackingEnabled && stepsOpen && (
+    <div className="today-compact" style={{ display: "flex", flexDirection: "column", gap: 12, height: "100%", minHeight: 0, boxSizing: "border-box", justifyContent: "space-between" }}> 
+      {stepsOpen && (
         <ConfirmDialog
           message={t(`오늘 걸음수: ${stepsValue}보\n최근 7일 평균: ${avgStepsLabel}보`, `Today's steps: ${stepsValue}\nRecent 7-day average: ${avgStepsLabel}`)}
           onConfirm={() => setStepsOpen(false)}
@@ -1688,103 +2114,171 @@ function TodayTab({ settings, bodycomp, recentAvgSteps, currentSteps, stepTracki
           tone="neutral"
         />
       )}
-      <ScreenHeader
-        eyebrow={t("오늘", "Today")}
-        title={greeting}
-        subtitle={t("오늘 상태를 확인하고 바로 기록하세요.", "Check today, then log what matters.")}
-        color={actColor}
-      />
-      {stepTrackingEnabled && (
-        <button onClick={() => setStepsOpen(true)} style={{ width: "100%", border: `1px solid ${tint(progressColor, 0.34)}`, background: `linear-gradient(135deg, ${tint(progressColor, theme.isDark ? 0.26 : 0.20)}, ${theme.surface})`, borderRadius: 22, padding: 15, textAlign: "left", cursor: "pointer", color: theme.text, boxShadow: theme.isDark ? `0 12px 28px ${tint("#000", 0.16)}` : `0 12px 28px ${tint(progressColor, 0.13)}` }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <Footprints size={17} color={actColor} />
-              <span style={{ fontSize: 12, fontWeight: 800, color: theme.textDim, letterSpacing: "0.04em", textTransform: "uppercase" }}>{t("오늘 걸음", "Today's Steps")}</span>
-            </div>
-            <ChevronRight size={15} color={theme.textFaint} />
+      <div className="today-header">
+        <ScreenHeader
+          eyebrow="Today"
+          title="Today"
+          subtitle={t("오늘 상태를 확인하고 바로 기록하세요.", "Check today, then log what matters.")}
+        />
+      </div>
+
+      {/* TWO PRIMARY METERS — calories & steps, equal weight */}
+      <div className="today-meters" style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+        <button onClick={() => goToTab("eat")} style={{ width: "100%", background: "transparent", border: "none", padding: 0, textAlign: "left", cursor: "pointer", color: theme.text }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 9 }}>
+            <span style={{ fontSize: 10.5, fontFamily: MONO_FONT_STACK, letterSpacing: "0.16em", textTransform: "uppercase", color: theme.textFaint }}>
+              {target != null ? (remaining >= 0 ? en("남은 칼로리", "Calories Left") : en("초과 칼로리", "Calories Over")) : en("칼로리", "Calories")}
+            </span>
+            <span style={{ fontSize: 11, fontFamily: MONO_FONT_STACK, color: theme.textFaint, letterSpacing: "0.04em" }}>
+              {target != null ? `${Math.round(calsToday).toLocaleString()} / ${Math.round(target).toLocaleString()}` : "—"}
+            </span>
           </div>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-            <span style={{ fontSize: 30, fontWeight: 850, color: theme.text, fontVariantNumeric: "tabular-nums" }}>{stepsValue}</span>
-            <span style={{ fontSize: 12, color: theme.textDim }}>{t("걸음", "steps")}</span>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 11 }}>
+            <span style={{ fontSize: 34, fontWeight: 800, lineHeight: 0.9, fontVariantNumeric: "tabular-nums", letterSpacing: "-0.02em", color: target != null && remaining < 0 ? theme.danger : theme.text }}>
+              {target != null ? Math.abs(remaining).toLocaleString() : "—"}
+            </span>
+            <span style={{ fontSize: 12, color: theme.textDim, fontFamily: MONO_FONT_STACK }}>kcal</span>
           </div>
-          {currentSteps != null && <div style={{ fontSize: 11.5, color: theme.textDim, marginTop: 4 }}>{Math.round(currentSteps).toLocaleString()} / 10,000 · {Math.min(100, Math.round((currentSteps/10000)*100))}%</div>}
-          {currentSteps != null && <StepAchievementBar steps={Math.round(currentSteps)} />}
+          <ProgressLine value={calPct} color={theme.lift} />
         </button>
-      )}
-      <div style={{ display: "flex", gap: 8 }}>
-        <MiniMetric onClick={() => openActView("body")} label={t("몸", "Body")} value={weight ? `${Number(weight).toFixed(1)}kg` : "—"} sub={bodyfat ? `${t("체지방", "Body fat")} ${Math.round(bodyfat)}%` : t("현재 체중", "Current weight")} color={actColor} icon={<Scale size={15} />} />
-        <MiniMetric onClick={() => goToTab("plan")} label={t("목표", "Goal")} value={goalLabel} sub={t("현재 모드", "current mode")} color={planColor} icon={<Award size={15} />} />
-      </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 2 }}>
-        <div style={{ fontSize: 12, color: theme.textFaint, fontWeight: 800, letterSpacing: "0.03em", textTransform: "uppercase" }}>{t("무엇을 하시나요?", "What are you doing?")}</div>
-        <IntentCard title="Act" body={t("운동, 활동, 체성분, 체크인을 기록합니다.", "Log training, activity, body updates or check-ins.")} color={actColor} icon={<Activity size={22} />} onClick={() => goToTab("act", { reset: true })} />
-        <IntentCard title="Eat" body={t("식사, 간식, 수분, 영양을 기록합니다.", "Log meals, snacks, water and nutrition.")} color={eatColor} icon={<Utensils size={22} />} onClick={() => goToTab("eat", { reset: true })} />
-        <IntentCard title="Plan" body={t("목표, 칼로리, 운동 계획, 주간 타깃을 조정합니다.", "Adjust goals, calories, programs and weekly targets.")} color={planColor} icon={<Clock size={22} />} onClick={() => goToTab("plan", { reset: true })} />
-      </div>
-      <Card variant="feature" accent={eatColor}>
-        <SectionTitle>{t("오늘 스냅샷", "Today's Snapshot")}</SectionTitle>
-        <div style={{ display: "grid", gridTemplateColumns: "82px 1fr", gap: 14, alignItems: "center" }}>
-          <div style={{ width: 72, height: 72, borderRadius: 999, background: `conic-gradient(${actColor} 0 38%, ${eatColor} 38% 68%, ${planColor} 68% 84%, ${tint(theme.text, theme.isDark ? 0.18 : 0.10)} 84% 100%)`, display: "grid", placeItems: "center" }}>
-            <div style={{ width: 46, height: 46, borderRadius: 999, background: theme.surface }} />
+
+        {!WEB_BUILD && (
+        <button onClick={() => setStepsOpen(true)} style={{ width: "100%", background: "transparent", border: "none", padding: 0, textAlign: "left", cursor: "pointer", color: theme.text }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 9 }}>
+            <span style={{ fontSize: 10.5, fontFamily: MONO_FONT_STACK, letterSpacing: "0.16em", textTransform: "uppercase", color: theme.textFaint }}>{en("걸음", "Steps")}</span>
+            <span style={{ fontSize: 11, fontFamily: MONO_FONT_STACK, color: theme.textFaint, letterSpacing: "0.04em" }}>
+              {stepsNum != null ? `${stepsNum.toLocaleString()} / ${STEPS_GOAL.toLocaleString()}` : "—"}
+            </span>
           </div>
-          <div>
-            <div style={{ fontSize: 23, fontWeight: 900, color: theme.text }}>{Math.round(calsToday || 0).toLocaleString()} <span style={{ fontSize: 12, color: theme.textDim, fontWeight: 700 }}>kcal</span></div>
-            <div style={{ marginTop: 9, display: "grid", gap: 6 }}>
-              <ProgressLine value={Math.min(100, (calsToday / Math.max(1, target)) * 100)} color={actColor} />
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11.5, color: theme.textDim }}>
-                <span>{t("음식", "Food")}</span><span>{Math.round(calsToday || 0)} / {Math.round(target || 0)}</span>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 11 }}>
+            <span style={{ fontSize: 34, fontWeight: 800, lineHeight: 0.9, fontVariantNumeric: "tabular-nums", letterSpacing: "-0.02em", color: stepGoalHit ? stepSuccessColor : theme.text }}>
+              {stepsNum != null ? stepsNum.toLocaleString() : "—"}
+            </span>
+            <span style={{ fontSize: 12, color: theme.textDim, fontFamily: MONO_FONT_STACK }}>{en("걸음", "steps")}</span>
+          </div>
+          <ProgressLine value={stepsPct} color={stepGoalHit ? stepSuccessColor : theme.text} />
+        </button>
+        )}
+      </div>
+
+      {/* TODAY'S SESSION — action block */}
+      <div className="today-session">
+        <div style={{ fontSize: 11, fontFamily: MONO_FONT_STACK, letterSpacing: "0.14em", textTransform: "uppercase", color: theme.textDim, marginBottom: 10 }}>{isRestDay ? en("오늘 회복", "Today's Recovery") : en("오늘 세션", "Today's Session")}</div>
+        {plannedSessionComplete ? (
+          <div style={{ borderTop: `1px solid ${stepSuccessColor}`, borderBottom: `1px solid ${stepSuccessColor}`, padding: "14px 2px", display: "flex", alignItems: "center", gap: 12 }}>
+            <div style={{ width: 38, height: 38, borderRadius: 999, background: tint(stepSuccessColor,.15), display: "grid", placeItems: "center" }}><Check size={20} color={stepSuccessColor}/></div>
+            <div><div style={{ fontSize: 18, fontFamily: SERIF_FONT_STACK, fontStyle: "italic", color: theme.text }}>{t("오늘의 세션을 완료했습니다", "Nice work — today's session is complete.")}</div><div style={{ fontSize: 10.5, color: stepSuccessColor, fontFamily: MONO_FONT_STACK, marginTop: 4 }}>SESSION COMPLETE</div></div>
+          </div>
+        ) : isRestDay ? (
+          restCompleted ? (
+            <div style={{ borderTop: `1px solid ${stepSuccessColor}`, borderBottom: `1px solid ${stepSuccessColor}`, padding: "14px 2px", display: "flex", alignItems: "center", gap: 12 }}>
+              <div style={{ width: 38, height: 38, borderRadius: 999, background: tint(stepSuccessColor,.15), display: "grid", placeItems: "center" }}><Check size={20} color={stepSuccessColor}/></div>
+              <div>
+                <div style={{ fontSize: 18, fontFamily: SERIF_FONT_STACK, fontStyle: "italic", color: theme.text }}>{t("휴식 완료", "Recovery complete.")}</div>
+                <div style={{ fontSize: 10.5, color: stepSuccessColor, fontFamily: MONO_FONT_STACK, marginTop: 4 }}>CONSISTENCY KEPT</div>
               </div>
             </div>
-          </div>
+          ) : (
+            <div style={{ borderTop: `1px solid ${theme.border}`, borderBottom: `1px solid ${theme.border}`, padding: "16px 2px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+              <div>
+                <div style={{ fontSize: 11, fontFamily: MONO_FONT_STACK, letterSpacing: "0.14em", textTransform: "uppercase", color: theme.textDim, marginBottom: 8 }}>{en("오늘 회복", "Today's Recovery")}</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}><BedDouble size={18} color={theme.textDim}/><div style={{ fontSize: 20, fontWeight: 500, fontStyle: "italic", fontFamily: SERIF_FONT_STACK, color: theme.textDim }}>{t("휴식일", "Rest Day")}</div></div>
+                <div style={{ fontSize: 10.5, fontFamily: MONO_FONT_STACK, letterSpacing: "0.1em", textTransform: "uppercase", color: theme.textFaint, marginTop: 6 }}>{en("휴식 완료 시 consistency 유지", "Confirm rest to keep consistency")}</div>
+              </div>
+              <button onClick={completeRestDay} style={{ background: theme.lift, border: "none", borderRadius: 2, padding: "10px 14px", cursor: "pointer", color: "#0A0A0A", fontFamily: MONO_FONT_STACK, fontSize: 11, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", flexShrink: 0 }}>{en("휴식 완료", "Done")}</button>
+            </div>
+          )
+        ) : (
+          <button onClick={() => openActView(todayIsRun ? "cardio" : "training")} style={{
+            width: "100%", textAlign: "left", cursor: "pointer",
+            background: theme.lift, border: "none", borderRadius: 2, padding: "16px 18px",
+            display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
+          }}>
+            <div>
+              <div style={{ fontSize: 22, fontWeight: 600, fontStyle: "italic", fontFamily: SERIF_FONT_STACK, color: "#0A0A0A", lineHeight: 1 }}>{sessionLabel}</div>
+              <div style={{ fontSize: 10.5, fontFamily: MONO_FONT_STACK, letterSpacing: "0.1em", textTransform: "uppercase", color: "rgba(10,10,10,0.62)", marginTop: 6 }}>
+                {todayIsRun ? en("유산소 세션", "Cardio Session") : `${sessionExCount} ${en("개 운동", "Exercises")}`}
+              </div>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, background: "rgba(10,10,10,0.14)", borderRadius: 2, padding: "10px 14px", flexShrink: 0 }}>
+              <span style={{ fontSize: 11, fontWeight: 700, fontFamily: MONO_FONT_STACK, letterSpacing: "0.08em", textTransform: "uppercase", color: "#0A0A0A" }}>{en("시작", "Start")}</span>
+              <ChevronRight size={15} color="#0A0A0A" strokeWidth={2.5} />
+            </div>
+          </button>
+        )}
+      </div>
+
+      {/* INDICATOR STRIP — weight / streak / next (steps promoted above) */}
+      <div className="today-indicators">
+        <RuleLine />
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)" }}>
+          {cells.map((c, i) => (
+            <button key={c.label} onClick={c.onClick} style={{
+              background: "none", border: "none", cursor: "pointer", textAlign: "left",
+              padding: "13px 10px 13px 0", borderRight: i < 2 ? `1px solid ${theme.border}` : "none",
+              paddingLeft: i === 0 ? 0 : 12,
+            }}>
+              <div style={{ fontSize: 9, fontFamily: MONO_FONT_STACK, letterSpacing: "0.14em", color: theme.textFaint, marginBottom: 7 }}>{c.label}</div>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 3 }}>
+                <span style={{ fontSize: c.small ? 13 : 19, fontWeight: c.small ? 600 : 800, color: theme.text, fontVariantNumeric: "tabular-nums", lineHeight: 1, letterSpacing: c.small ? "0" : "-0.01em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%" }}>{c.value}</span>
+                {c.unit && <span style={{ fontSize: 10, color: theme.textDim }}>{c.unit}</span>}
+              </div>
+            </button>
+          ))}
         </div>
-      </Card>
-      <Card variant="quiet">
-        <SectionTitle>{t("오늘 체크리스트", "Today's Checklist")}</SectionTitle>
+        <RuleLine />
+      </div>
+
+      {/* TODAY'S CHECKLIST — rule-line list */}
+      <div className="today-checklist">
+        <div style={{ fontSize: 11, fontFamily: MONO_FONT_STACK, letterSpacing: "0.14em", textTransform: "uppercase", color: theme.textDim, marginBottom: 4 }}>{en("오늘 체크리스트", "Today's Log")}</div>
         <div style={{ display: "flex", flexDirection: "column" }}>
           {statusItems.map((item, i) => (
             <button key={i} onClick={item.action} style={{
               display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%",
-              padding: "10px 0", borderTop: i === 0 ? "none" : `1px solid ${theme.border}`,
+              padding: "13px 0", borderTop: `1px solid ${theme.border}`,
               background: "none", border: "none", cursor: "pointer", textAlign: "left",
+              borderTopWidth: 1, borderTopStyle: "solid", borderTopColor: theme.border,
             }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 11 }}>
                 <div style={{
-                  width: 18, height: 18, borderRadius: 9, flexShrink: 0,
-                  background: item.done ? item.color : "transparent",
-                  border: `1.5px solid ${item.done ? item.color : theme.border}`,
+                  width: 16, height: 16, borderRadius: 2, flexShrink: 0,
+                  background: item.done ? theme.lift : "transparent",
+                  border: `1.5px solid ${item.done ? theme.lift : theme.border}`,
                   display: "flex", alignItems: "center", justifyContent: "center",
                 }}>
-                  {item.done && <Check size={11} color="#FFFFFF" />}
+                  {item.done && <Check size={10} color="#0A0A0A" strokeWidth={3} />}
                 </div>
-                <span style={{ fontSize: 13, color: theme.text }}>{item.label}</span>
+                <span style={{ fontSize: 13, color: item.done ? theme.text : theme.textDim }}>{item.label}</span>
               </div>
-              <ChevronRight size={15} color={theme.textFaint} />
+              <span style={{ fontSize: 9.5, fontFamily: MONO_FONT_STACK, letterSpacing: "0.1em", color: item.done ? theme.lift : theme.textFaint }}>{item.done ? "LOGGED" : "PENDING"}</span>
             </button>
           ))}
         </div>
-      </Card>
+        <RuleLine />
+      </div>
     </div>
   );
 }
 
 function ActionTile({ title, body, icon, color, onClick }) {
   const theme = useTheme();
-  const dark = theme.heroText || "#17120E";
-  const muted = theme.heroTextDim || "#5F4933";
   return (
-    <button onClick={onClick} style={{ border: `1px solid ${tint(color, 0.32)}`, background: `linear-gradient(180deg, ${theme.cream2 || '#F8EFD8'}, ${theme.cream || '#F3E9D2'})`, borderRadius: 18, padding: 14, minHeight: 112, cursor: "pointer", color: dark, textAlign: "left", display: "flex", flexDirection: "column", justifyContent: "space-between", gap: 12, boxShadow: "0 10px 22px rgba(0,0,0,0.16)", position: "relative", overflow: "hidden" }}>
-      <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 5, background: color, opacity: 0.95 }} />
-      <div style={{ width: 40, height: 40, borderRadius: 12, display: "grid", placeItems: "center", background: tint(color, 0.16), color: color, border: `1px solid ${tint(color, 0.28)}` }}>{icon}</div>
+    <button onClick={onClick} style={{ border: "none", borderTop: `1px solid ${theme.border}`, background: "transparent", padding: "16px 2px", minHeight: 92, cursor: "pointer", color: theme.text, textAlign: "left", display: "flex", flexDirection: "column", justifyContent: "space-between", gap: 14, position: "relative" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <span style={{ color: theme.textFaint }}>{icon}</span>
+        <ChevronRight size={16} color={theme.textFaint} />
+      </div>
       <div>
-        <div style={{ fontSize: 15, fontWeight: 900 }}>{title}</div>
-        <div style={{ fontSize: 12, color: muted, marginTop: 4, lineHeight: 1.35 }}>{body}</div>
+        <div style={{ fontSize: 17, fontWeight: 500, fontStyle: "italic", fontFamily: SERIF_FONT_STACK, letterSpacing: "-0.01em", color: theme.text }}>{title}</div>
+        <div style={{ fontSize: 11, color: theme.textDim, marginTop: 5, lineHeight: 1.4 }}>{body}</div>
       </div>
     </button>
   );
 }
 
-function ActTab({ workouts, setWorkouts, programs, bodycomp, setBodycomp, dayLogs, setDayLogs, initialView, onConsumedInitialView, resetSignal, onViewChange, currentSteps, stepTrackingEnabled }) {
-  const { t } = useLang();
+function ActTab({ isActive = true, workouts, setWorkouts, programs, weekPlan, bodycomp, setBodycomp, dayLogs, setDayLogs, initialView, onConsumedInitialView, resetSignal, onViewChange, currentSteps }) {
+  const { t, en } = useLang();
   const theme = useTheme();
   const [view, setView] = useState("overview");
   const [editWorkoutId, setEditWorkoutId] = useState(null);
@@ -1792,16 +2286,24 @@ function ActTab({ workouts, setWorkouts, programs, bodycomp, setBodycomp, dayLog
   const [showAllDayLogs, setShowAllDayLogs] = useState(false);
 
   const openView = (next) => {
+    // Recent Activity can open an edit modal directly from the Act overview.
+    // Once the user navigates into a real Act sub-screen, clear that direct-edit
+    // request so the new WorkoutsTab instance does not consume a stale edit id.
     if (next && next !== "overview") {
+      setEditWorkoutId(null);
+      setEditWorkoutSignal((v) => v + 1);
       try { window.history.pushState({ hlActView: next }, "", window.location.href); } catch (e) { /* ignore */ }
     }
     setView(next || "overview");
   };
-  const closeView = () => setView("overview");
+  const closeView = () => {
+    setEditWorkoutId(null);
+    setEditWorkoutSignal((v) => v + 1);
+    setView("overview");
+  };
   const openWorkoutEdit = (entry) => {
     setEditWorkoutId(entry.id);
     setEditWorkoutSignal((v) => v + 1);
-    openView(entry.type === "run" ? "cardio" : "training");
   };
 
   useEffect(() => {
@@ -1829,99 +2331,182 @@ function ActTab({ workouts, setWorkouts, programs, bodycomp, setBodycomp, dayLog
     return () => window.removeEventListener("popstate", onPopState);
   }, [view]);
 
+  // Resolve today's plan before rendering a subview so the training screen can open the correct program.
+  const todayIdx = (nowDate().getDay() + 6) % 7;
+  const todayPlan = weekPlan?.[todayIdx];
+  const todayProgram = todayPlan?.kind === "lift" ? (programs?.find((p) => p.id === todayPlan.programId) || null) : null;
+  const todayIsRun = todayPlan?.kind === "run";
+
   const BackBtn = () => <button onClick={closeView} style={{ alignSelf: "flex-start", background: "transparent", border: "none", color: theme.ring, fontSize: 13, fontWeight: 700 }}>← {t("Act", "Act")}</button>;
-  if (view === "training") return <div style={{ display: "flex", flexDirection: "column", gap: 12 }}><BackBtn /><WorkoutsTab workouts={workouts} setWorkouts={setWorkouts} programs={programs} initialEditId={editWorkoutId} editSignal={editWorkoutSignal} /></div>;
-  if (view === "cardio") return <div style={{ display: "flex", flexDirection: "column", gap: 12 }}><BackBtn /><WorkoutsTab workouts={workouts} setWorkouts={setWorkouts} programs={programs} initialMode="run" initialEditId={editWorkoutId} editSignal={editWorkoutSignal} /></div>;
-  if (view === "body") return <div style={{ display: "flex", flexDirection: "column", gap: 12 }}><BackBtn /><BodyCompTab bodycomp={bodycomp} setBodycomp={setBodycomp} /></div>;
-  if (view === "checkin") return <div style={{ display: "flex", flexDirection: "column", gap: 12 }}><BackBtn /><DayLogCard dayLogs={dayLogs} setDayLogs={setDayLogs} /></div>;
+  if (view === "training") return <div style={{ display: "flex", flexDirection: "column", gap: 12, animation: "hlViewIn 0.3s cubic-bezier(0.22, 1, 0.36, 1)" }}><BackBtn /><WorkoutsTab isActive={isActive} workouts={workouts} setWorkouts={setWorkouts} programs={programs} initialProgramId={todayProgram?.id || null} initialEditId={editWorkoutId} editSignal={editWorkoutSignal} /></div>;
+  if (view === "cardio") return <div style={{ display: "flex", flexDirection: "column", gap: 12, animation: "hlViewIn 0.3s cubic-bezier(0.22, 1, 0.36, 1)" }}><BackBtn /><WorkoutsTab isActive={isActive} workouts={workouts} setWorkouts={setWorkouts} programs={programs} initialMode="run" initialEditId={editWorkoutId} editSignal={editWorkoutSignal} /></div>;
+  if (view === "body") return <div style={{ display: "flex", flexDirection: "column", gap: 12, animation: "hlViewIn 0.3s cubic-bezier(0.22, 1, 0.36, 1)" }}><BackBtn /><BodyCompTab bodycomp={bodycomp} setBodycomp={setBodycomp} /></div>;
+  if (view === "checkin") return <div style={{ display: "flex", flexDirection: "column", gap: 12, animation: "hlViewIn 0.3s cubic-bezier(0.22, 1, 0.36, 1)" }}><BackBtn /><DayLogCard dayLogs={dayLogs} setDayLogs={setDayLogs} /></div>;
   const recentActivities = [...workouts].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 5);
   const sortedDayLogs = [...dayLogs].sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
   const visibleDayLogs = showAllDayLogs ? sortedDayLogs : sortedDayLogs.slice(0, 4);
+  const directEditWorkout = editWorkoutId ? workouts.find((w) => w.id === editWorkoutId) : null;
+
+  const todayLabel = todayProgram ? todayProgram.name : todayIsRun ? (todayPlan.runLabel === "L.R" ? "Long Run" : todayPlan.runLabel === "S.R" ? "Short Run" : "Run") : t("휴식", "Rest");
+  const todayExCount = todayProgram?.exercises?.length || 0;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <ScreenHeader
-        eyebrow="ACT"
-        title={t("ACT", "ACT")}
-        subtitle={t("Move your body.", "Move your body.")}
-        color={theme.act || theme.lift}
+      <WorkoutsTab
+        isActive={isActive && view === "overview"}
+        modalOnly
+        workouts={workouts}
+        setWorkouts={setWorkouts}
+        programs={programs}
+        initialMode={directEditWorkout?.type === "run" ? "run" : undefined}
+        initialProgramId={directEditWorkout?.programId || todayProgram?.id || null}
+        initialEditId={editWorkoutId}
+        editSignal={editWorkoutSignal}
       />
-      {stepTrackingEnabled && (
-        <Card variant="feature" accent={theme.act || theme.lift} style={{ padding: 14 }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 8 }}>
-            <div>
-              <div style={{ fontSize: 12, fontWeight: 850, color: theme.textDim, letterSpacing: '0.08em', textTransform: 'uppercase' }}>{t("걸음 진행도", "Step Progress")}</div>
-              <div style={{ fontSize: 24, fontWeight: 900, color: theme.text, fontVariantNumeric: 'tabular-nums', marginTop: 4 }}>{currentSteps != null ? Math.round(currentSteps).toLocaleString() : '—'} <span style={{ fontSize: 12, color: theme.textDim }}>{t("/ 10,000 걸음", "/ 10,000 steps")}</span></div>
+      <ScreenHeader
+        eyebrow="Activity"
+        title="Act"
+        subtitle={t("운동, 활동, 체성분, 체크인을 한 곳에서 기록합니다.", "Log training, activity, body and check-ins.")}
+      />
+      {/* ACTION ZONE — today's session as the prominent entry */}
+      <div style={{ marginTop: 4 }}>
+        <div style={{ fontSize: 10.5, fontFamily: MONO_FONT_STACK, letterSpacing: "0.16em", textTransform: "uppercase", color: theme.textFaint, marginBottom: 10 }}>
+          {en("오늘 세션", "Today's Session")}
+        </div>
+        <button onClick={() => openView(todayIsRun ? "cardio" : "training")} style={{
+          width: "100%", textAlign: "left", cursor: "pointer",
+          background: theme.lift, border: "none", borderRadius: 2, padding: "16px 18px",
+          display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
+        }}>
+          <div>
+            <div style={{ fontSize: 22, fontWeight: 600, fontStyle: "italic", fontFamily: SERIF_FONT_STACK, color: "#0A0A0A", lineHeight: 1 }}>{todayLabel}</div>
+            <div style={{ fontSize: 10.5, fontFamily: MONO_FONT_STACK, letterSpacing: "0.1em", textTransform: "uppercase", color: "rgba(10,10,10,0.62)", marginTop: 6 }}>
+              {todayIsRun ? en("유산소", "Cardio") : todayProgram ? `${todayExCount} ${en("개 운동", "Exercises")}` : en("휴식일 · 자유 운동", "Rest day · free log")}
             </div>
-            <div style={{ fontSize: 13, fontWeight: 900, color: theme.act || theme.lift }}>{currentSteps != null ? `${Math.min(100, Math.round((currentSteps/10000)*100))}%` : '—'}</div>
           </div>
-          {currentSteps != null && <StepAchievementBar steps={Math.round(currentSteps)} />}
-        </Card>
-      )}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-        <ActionTile title="Training" body={t("근력 운동과 가이드 세션", "Strength workouts and guided sessions")} color={theme.act || "#F76B55"} icon={<Dumbbell size={20} />} onClick={() => openView("training")} />
-        <ActionTile title="Cardio" body={t("러닝, 걷기, 유산소 기록", "Runs, walks and cardio logs")} color={theme.progress || "#6EA7D6"} icon={<Activity size={20} />} onClick={() => openView("cardio")} />
-        <ActionTile title="Body Update" body={t("체중, 체지방, 신체 치수", "Weight, body fat and measurements")} color={theme.plan || "#F5B942"} icon={<Scale size={20} />} onClick={() => openView("body")} />
-        <ActionTile title="Check-in" body={t("에너지, 수면, 컨디션", "Energy, sleep and recovery notes")} color={theme.checkin || "#A88BD8"} icon={<Smile size={20} />} onClick={() => openView("checkin")} />
-      </div>
-      <Card variant="quiet" accent={theme.checkin || "#A88BD8"}>
-        <SectionTitle right={sortedDayLogs.length > 4 ? (
-          <button onClick={() => setShowAllDayLogs(!showAllDayLogs)} style={{ background: "none", border: "none", color: theme.checkin || theme.ring, fontSize: 12, fontWeight: 800, cursor: "pointer" }}>
-            {showAllDayLogs ? t("접기", "Collapse") : t("더 보기", "View all")}
+          <div style={{ display: "flex", alignItems: "center", gap: 7, background: "rgba(10,10,10,0.14)", borderRadius: 2, padding: "10px 14px", flexShrink: 0 }}>
+            <span style={{ fontSize: 11, fontWeight: 700, fontFamily: MONO_FONT_STACK, letterSpacing: "0.08em", textTransform: "uppercase", color: "#0A0A0A" }}>{en("시작", "Start")}</span>
+            <ChevronRight size={15} color="#0A0A0A" strokeWidth={2.5} />
+          </div>
+        </button>
+
+        {/* secondary actions — compact row, demoted below the primary CTA */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginTop: 8 }}>
+          {[
+            { label: en("유산소", "Cardio"), icon: <Activity size={16} />, go: "cardio" },
+            { label: en("신체", "Body"), icon: <Scale size={16} />, go: "body" },
+            { label: en("체크인", "Check-in"), icon: <Smile size={16} />, go: "checkin" },
+          ].map((a) => (
+            <button key={a.go} onClick={() => openView(a.go)} style={{
+              background: "transparent", border: `1px solid ${theme.border}`, borderRadius: 2,
+              padding: "12px 8px", cursor: "pointer", color: theme.textDim,
+              display: "flex", flexDirection: "column", alignItems: "center", gap: 7,
+            }}>
+              {a.icon}
+              <span style={{ fontSize: 9.5, fontFamily: MONO_FONT_STACK, letterSpacing: "0.1em", textTransform: "uppercase" }}>{a.label}</span>
+            </button>
+          ))}
+        </div>
+
+        {/* Android-only steps — hidden in the GitHub Pages/web build */}
+        {!WEB_BUILD && (
+        <div style={{ marginTop: 16 }}>
+          <RuleLine />
+          <button onClick={() => openView("body")} style={{ width: "100%", background: "none", border: "none", cursor: "pointer", textAlign: "left", padding: "13px 0", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <span style={{ fontSize: 10, fontFamily: MONO_FONT_STACK, letterSpacing: "0.14em", textTransform: "uppercase", color: theme.textFaint }}>{en("걸음", "Steps")}</span>
+            <span style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+              <span style={{ fontSize: 19, fontWeight: 800, color: theme.text, fontVariantNumeric: "tabular-nums" }}>{currentSteps != null ? Math.round(currentSteps).toLocaleString() : "—"}</span>
+              <span style={{ fontSize: 10, color: theme.textFaint, fontFamily: MONO_FONT_STACK }}>/ 10,000</span>
+            </span>
           </button>
-        ) : null}>{t("데일리 로그", "Daily Log")}</SectionTitle>
-        {visibleDayLogs.length ? (
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {visibleDayLogs.map((d) => (
-              <button key={d.id} onClick={() => openView("checkin")} style={{ width: "100%", textAlign: "left", background: tint(theme.checkin || theme.ring, theme.isDark ? 0.12 : 0.08), border: `1px solid ${tint(theme.checkin || theme.ring, 0.22)}`, borderRadius: 14, padding: "10px 12px", color: theme.text, cursor: "pointer" }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 5 }}>
-                  <span style={{ fontSize: 13, fontWeight: 850 }}>{fmtDate(d.date)}</span>
-                  <span style={{ fontSize: 11.5, color: theme.textDim, fontVariantNumeric: "tabular-nums" }}>
-                    {t("기분", "Mood")} {d.mood || "—"} · {t("에너지", "Energy")} {d.energy || "—"} · {t("수면", "Sleep")} {d.sleep || "—"}
-                  </span>
-                </div>
-                {d.note && <div style={{ fontSize: 12.5, color: theme.textDim, lineHeight: 1.4, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{d.note}</div>}
-              </button>
-            ))}
+          <RuleLine />
+        </div>
+        )}
+      </div>
+      {/* LOG ZONE — recent activity as a training logbook (rule lines) */}
+      <div style={{ marginTop: 22 }}>
+        <div style={{ fontSize: 10.5, fontFamily: MONO_FONT_STACK, letterSpacing: "0.16em", textTransform: "uppercase", color: theme.textFaint, marginBottom: 4 }}>
+          {en("최근 활동", "Recent Activity")}
+        </div>
+        {recentActivities.length ? (
+          <div>
+            {recentActivities.map((w, i) => {
+              const isLift = w.type === "lift";
+              // derive a compact right-hand metric: volume for lifts, distance/time for runs
+              let metric = "";
+              if (isLift && Array.isArray(w.exercises)) {
+                const vol = w.exercises.reduce((s, ex) => s + (ex.sets || []).reduce((ss, st) => ss + (Number(st.weight) || 0) * (Number(st.reps) || 0), 0), 0);
+                const setCount = w.exercises.reduce((s, ex) => s + (ex.sets?.length || 0), 0);
+                metric = vol > 0 ? `${setCount} ${en("세트", "sets")} · ${Math.round(vol).toLocaleString()}kg` : `${setCount} ${en("세트", "sets")}`;
+              } else if (!isLift) {
+                metric = [w.distanceKm ? `${w.distanceKm}km` : null, w.durationMin ? `${w.durationMin}min` : null].filter(Boolean).join(" · ");
+              }
+              return (
+                <button key={w.id} onClick={() => openWorkoutEdit(w)} style={{
+                  width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center",
+                  padding: "13px 0", borderTop: `1px solid ${theme.border}`,
+                  background: "none", border: "none", borderTop: `1px solid ${theme.border}`, cursor: "pointer", textAlign: "left",
+                  ...staggerStyle(i),
+                }}>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 10, minWidth: 0 }}>
+                    <span style={{ fontSize: 15, fontWeight: 600, fontStyle: "italic", fontFamily: SERIF_FONT_STACK, color: theme.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{w.subtype || (isLift ? "Lift" : "Run")}</span>
+                    <span style={{ fontSize: 10, fontFamily: MONO_FONT_STACK, letterSpacing: "0.06em", color: theme.textFaint, whiteSpace: "nowrap" }}>{fmtDate(w.date)}</span>
+                  </div>
+                  <span style={{ fontSize: 11, fontFamily: MONO_FONT_STACK, color: theme.textDim, letterSpacing: "0.04em", whiteSpace: "nowrap", flexShrink: 0, marginLeft: 10 }}>{metric || (isLift ? en("리프팅", "LIFT") : en("유산소", "CARDIO"))}</span>
+                </button>
+              );
+            })}
+            <RuleLine />
           </div>
         ) : (
-          <EmptyState text={t("아직 데일리 로그가 없습니다.", "No daily logs yet.")} actionLabel={t("체크인 작성", "Write check-in")} onAction={() => openView("checkin")} />
+          <div><RuleLine /><EmptyState icon={Activity} text={t("아직 활동 기록이 없어요.", "No activity logged yet.")} /><RuleLine /></div>
         )}
-      </Card>
+      </div>
 
-      <Card variant="quiet" accent={theme.act || theme.lift}>
-        <SectionTitle>{t("최근 활동", "Recent Activity")}</SectionTitle>
-        {recentActivities.length ? (
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {recentActivities.map((w) => {
-              const accent = w.type === "lift" ? theme.lift : theme.run;
-              return (
-              <button key={w.id} onClick={() => openWorkoutEdit(w)} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 12px", border: `1px solid ${tint(accent, 0.22)}`, borderRadius: 14, background: `linear-gradient(135deg, ${tint(accent, 0.12)}, ${theme.darkPanel2 || theme.surface})`, color: theme.text, cursor: "pointer", textAlign: "left", boxShadow: "0 8px 18px rgba(0,0,0,0.14)" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
-                  <span style={{ width: 32, height: 32, borderRadius: 10, background: tint(accent, 0.14), border: `1px solid ${tint(accent,0.25)}`, display: "grid", placeItems: "center", flexShrink: 0 }}>{w.type === "lift" ? <Dumbbell size={15} color={accent} /> : <Activity size={15} color={accent} />}</span>
-                  <span style={{ minWidth: 0 }}><span style={{ fontWeight: 800, display: 'block' }}>{w.subtype || w.type}</span><span style={{ fontSize: 12, color: theme.textDim }}>{fmtDate(w.date)}</span></span>
+      {/* DAILY LOG — demoted, collapsible */}
+      <div style={{ marginTop: 20 }}>
+        <button onClick={() => setShowAllDayLogs(!showAllDayLogs)} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", background: "none", border: "none", cursor: "pointer", padding: "0 0 4px" }}>
+          <span style={{ fontSize: 10.5, fontFamily: MONO_FONT_STACK, letterSpacing: "0.16em", textTransform: "uppercase", color: theme.textFaint }}>{en("데일리 로그", "Daily Log")}</span>
+          <span style={{ fontSize: 10, fontFamily: MONO_FONT_STACK, color: theme.textFaint, display: "flex", alignItems: "center", gap: 4 }}>
+            {sortedDayLogs.length > 0 ? (showAllDayLogs ? en("접기", "Less") : en("펼치기", "More")) : ""}
+            {sortedDayLogs.length > 0 && (showAllDayLogs ? <ChevronUp size={13} /> : <ChevronDown size={13} />)}
+          </span>
+        </button>
+        {sortedDayLogs.length ? (
+          <div>
+            {(showAllDayLogs ? sortedDayLogs.slice(0, 10) : sortedDayLogs.slice(0, 2)).map((d) => (
+              <button key={d.id} onClick={() => openView("checkin")} style={{ width: "100%", textAlign: "left", background: "none", border: "none", borderTop: `1px solid ${theme.border}`, padding: "12px 0", color: theme.text, cursor: "pointer" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                  <span style={{ fontSize: 13, fontWeight: 600, fontStyle: "italic", fontFamily: SERIF_FONT_STACK }}>{fmtDate(d.date)}</span>
+                  <span style={{ fontSize: 10.5, color: theme.textDim, fontFamily: MONO_FONT_STACK, letterSpacing: "0.04em" }}>
+                    {d.restCompleted ? "REST · " : ""}{en("기분", "M")}{d.mood || "—"} · {en("에너지", "E")}{d.energy || "—"} · {en("수면", "S")}{d.sleep || "—"}
+                  </span>
                 </div>
-                <span style={{ display: 'flex', alignItems:'center', gap:6, color: theme.textFaint, fontSize: 12 }}><Pencil size={12} color={theme.textFaint} />{t("수정", "Edit")}</span>
+                {d.note && <div style={{ fontSize: 12, color: theme.textFaint, lineHeight: 1.4, marginTop: 4, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 1, WebkitBoxOrient: "vertical" }}>{d.note}</div>}
               </button>
-            )})}
+            ))}
+            <RuleLine />
           </div>
-        ) : <EmptyState text={t("아직 활동 기록이 없어요.", "No activity logged yet.")} />}
-      </Card>
-      {workouts.length > 0 && <MuscleGroupBreakdown workouts={workouts} />}
+        ) : (
+          <div><RuleLine /><button onClick={() => openView("checkin")} style={{ width: "100%", padding: "16px 0", textAlign: "center", background: "none", border: "none", cursor: "pointer", fontSize: 12, color: theme.lift, fontFamily: MONO_FONT_STACK, letterSpacing: "0.08em", textTransform: "uppercase" }}>{en("체크인 작성", "Write check-in")}</button><RuleLine /></div>
+        )}
+      </div>
+
+      {workouts.length > 0 && <div style={{ marginTop: 16 }}><MuscleGroupBreakdown workouts={workouts} /></div>}
     </div>
   );
 }
 
 function PlanTab({ settings, onSaveSettings, bodycomp, nutrition, workouts, programs, weekPlan, setWeekPlan, setPrograms, recentAvgSteps, tdeeHistory, setTdeeHistory, resetSignal }) {
-  const { lang, t } = useLang();
+  const { lang, t, en } = useLang();
   const theme = useTheme();
   const { weight, bodyfat } = getLatestBodyComp(bodycomp, settings);
   const engine = estimateTdeeEngine(settings, bodycomp, nutrition, workouts, weight, recentAvgSteps);
-  const effectiveTdee = settings.acceptedTdee ?? engine?.effectiveTdee ?? null;
+  const effectiveTdee = targetTdee(settings, engine);
   const roundedTdee = effectiveTdee ? Math.round(effectiveTdee / 10) * 10 : null;
   const GoalButton = ({ mode, label }) => {
     const activeMode = settings.goalMode === mode;
-    return <button onClick={() => onSaveSettings({ ...settings, goalMode: mode })} style={{ flex: 1, minHeight: 48, borderRadius: 14, border: `1px solid ${activeMode ? theme.plan || theme.ring : theme.border}`, background: activeMode ? `linear-gradient(135deg, ${tint(theme.plan || theme.ring, 0.22)}, ${theme.darkPanel2 || theme.surface})` : theme.surface, color: activeMode ? theme.plan || theme.ring : theme.text, fontWeight: 900, letterSpacing: '0.02em' }}>{label}</button>;
+    return <button onClick={() => onSaveSettings({ ...settings, goalMode: mode })} style={{ flex: 1, minHeight: 48, borderRadius: 2, border: `1px solid ${activeMode ? theme.lift : theme.border}`, background: activeMode ? theme.lift : "transparent", color: activeMode ? (theme.heroText || "#0A0A0A") : theme.text, fontWeight: 700 }}>{label}</button>;
   };
 
   // This week's plan completion — same logic the old Dashboard used, now
@@ -1953,87 +2538,44 @@ function PlanTab({ settings, onSaveSettings, bodycomp, nutrition, workouts, prog
   const healthActive = !!(settings.pregnantOrBreastfeeding || settings.edRecoveryOrClinical);
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
       <ScreenHeader
-        eyebrow={t("계획", "Plan")}
-        title={t("PLAN", "PLAN")}
-        subtitle={t("Organize your day.", "Organize your day.")}
-        color={theme.plan || theme.ring}
+        eyebrow="Strategy"
+        title="Plan"
+        subtitle={t("목표, 칼로리, 운동 계획, 주간 타깃을 조정합니다.", "Set goals, calories, training and weekly targets.")}
       />
-      <Card variant="feature" accent={theme.plan || theme.ring}><SectionTitle>{t("목표", "Goal")}</SectionTitle><div style={{ display: "flex", gap: 8 }}><GoalButton mode="cut" label={t("감량", "Cut")} /><GoalButton mode="maintain" label={t("유지", "Maintain")} /><GoalButton mode="gain" label={t("증량", "Gain")} /></div></Card>
 
-      <Card variant="quiet" accent={healthActive ? theme.danger : (theme.eat || theme.lift)}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-          <div>
-            <div style={{ fontSize: 15, fontWeight: 900, color: theme.text }}>{t("건강 예외", "Health Context")}</div>
-            <div style={{ fontSize: 12, color: theme.textFaint, marginTop: 3 }}>
-              {healthActive ? t("건강 예외가 적용 중입니다.", "Health context is active.") : t("기본값: 꺼짐. 필요할 때만 켜세요.", "Default: off. Turn on only if needed.")}
-            </div>
-          </div>
-          <button
-            onClick={() => setShowHealthContext(!showHealthContext)}
-            style={{ width: 48, height: 28, borderRadius: 999, border: "none", background: showHealthContext ? (theme.eat || theme.lift) : theme.surfaceRaised, position: "relative", cursor: "pointer", flexShrink: 0 }}
-          >
-            <span style={{ position: "absolute", top: 4, left: showHealthContext ? 24 : 4, width: 20, height: 20, borderRadius: 999, background: theme.surface, transition: "left 0.2s ease", boxShadow: `0 2px 8px ${tint("#000", 0.18)}` }} />
-          </button>
+      {/* WEEKLY GRID — the hero of this tab */}
+      <div>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+          <span style={{ fontSize: 10.5, fontFamily: MONO_FONT_STACK, letterSpacing: "0.16em", textTransform: "uppercase", color: theme.textFaint }}>{en("주간 계획", "This Week")}</span>
+          <span style={{ fontSize: 10, fontFamily: MONO_FONT_STACK, letterSpacing: "0.06em", color: theme.textFaint }}>{en("요일 탭해서 수정", "Tap to edit")}</span>
         </div>
-        {showHealthContext && (
-          <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 8, marginTop: 12, paddingTop: 12, borderTop: `1px solid ${theme.border}` }}>
-            <button onClick={() => onSaveSettings({ ...settings, pregnantOrBreastfeeding: !settings.pregnantOrBreastfeeding })} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, padding: 12, borderRadius: 14, border: `1px solid ${settings.pregnantOrBreastfeeding ? theme.danger : theme.border}`, background: settings.pregnantOrBreastfeeding ? tint(theme.danger, 0.10) : theme.surface, color: theme.text, cursor: "pointer", textAlign: "left" }}>
-              <span style={{ fontSize: 13, fontWeight: 700 }}>{t("임신/수유 중", "Pregnant or breastfeeding")}</span>
-              <span style={{ width: 20, height: 20, borderRadius: 10, border: `2px solid ${settings.pregnantOrBreastfeeding ? theme.danger : theme.border}`, background: settings.pregnantOrBreastfeeding ? theme.danger : "transparent", display: "grid", placeItems: "center" }}>{settings.pregnantOrBreastfeeding && <Check size={12} color="#fff" />}</span>
-            </button>
-            <button onClick={() => onSaveSettings({ ...settings, edRecoveryOrClinical: !settings.edRecoveryOrClinical })} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, padding: 12, borderRadius: 14, border: `1px solid ${settings.edRecoveryOrClinical ? theme.danger : theme.border}`, background: settings.edRecoveryOrClinical ? tint(theme.danger, 0.10) : theme.surface, color: theme.text, cursor: "pointer", textAlign: "left" }}>
-              <span style={{ fontSize: 13, fontWeight: 700 }}>{t("식이장애 회복/임상 관리 중", "ED recovery or clinical supervision")}</span>
-              <span style={{ width: 20, height: 20, borderRadius: 10, border: `2px solid ${settings.edRecoveryOrClinical ? theme.danger : theme.border}`, background: settings.edRecoveryOrClinical ? theme.danger : "transparent", display: "grid", placeItems: "center" }}>{settings.edRecoveryOrClinical && <Check size={12} color="#fff" />}</span>
-            </button>
-          </div>
-        )}
-      </Card>
-
-      {roundedTdee && weight ? (
-        <Card variant="feature" accent={theme.act || theme.lift}>
-          <SectionTitle>{t("칼로리 전략", "Calorie Strategy")}</SectionTitle>
-          <GoalTargetsPanel
-            settings={settings}
-            onSaveSettings={onSaveSettings}
-            effectiveTdee={roundedTdee}
-            currentWeight={weight}
-            currentBF={bodyfat}
-            weekPlan={weekPlan}
-          />
-        </Card>
-      ) : (
-        <Card variant="feature" accent={theme.act || theme.lift}><SectionTitle>{t("칼로리 전략", "Calorie Strategy")}</SectionTitle><InsightLine>{t("신체 정보가 충분하면 목표 칼로리가 표시됩니다.", "Add body data to show a calorie target.")}</InsightLine></Card>
-      )}
-
-      <Card variant="quiet" accent={theme.progress || theme.run}>
-        <SectionTitle right={<span style={{ fontSize: 12, color: theme.textFaint }}>{t("요일 탭해서 수정", "Tap a day to edit")}</span>}>{t("운동 계획", "Training Plan")}</SectionTitle>
-        <div style={{ display: "flex", gap: 6, justifyContent: "space-between" }}>
+        <div style={{ display: "flex", gap: 5, justifyContent: "space-between" }}>
           {weekPlan.map((d, i) => {
             const isToday = i === todayIdx;
             const done = doneMap[i];
-            const color = d.kind === "lift" ? theme.lift : d.kind === "run" ? theme.run : theme.rest;
-            const label = d.kind === "lift" ? (programs.find((p) => p.id === d.programId)?.name || "?") : d.kind === "run" ? (d.runLabel === "S.R" ? "Short" : d.runLabel === "L.R" ? "Long" : (d.runLabel || t("런", "Run"))) : "Rest";
+            const isRest = d.kind === "rest";
+            const label = d.kind === "lift" ? (programs.find((p) => p.id === d.programId)?.name || "?") : d.kind === "run" ? (d.runLabel === "S.R" ? "Short" : d.runLabel === "L.R" ? "Long" : (d.runLabel || "Run")) : "Rest";
+            const active = editingDayIdx === i;
             return (
               <button key={i} onClick={() => setEditingDayIdx(editingDayIdx === i ? null : i)}
-                style={{ background: "none", border: "none", padding: 0, cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 4, flex: 1 }}>
-                <div style={{ fontSize: 12, color: isToday ? theme.text : theme.textFaint, fontWeight: isToday ? 700 : 500 }}>{WEEKDAY_LABELS[lang][i]}</div>
+                style={{ background: "none", border: "none", padding: 0, cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 6, flex: 1 }}>
+                <div style={{ fontSize: 9.5, fontFamily: MONO_FONT_STACK, letterSpacing: "0.08em", color: isToday ? theme.lift : theme.textFaint, fontWeight: isToday ? 700 : 500 }}>{["MON","TUE","WED","THU","FRI","SAT","SUN"][i]}</div>
                 <div style={{
-                  width: "100%", aspectRatio: "1", borderRadius: 12,
-                  background: done ? color : "transparent",
-                  border: `1.5px solid ${editingDayIdx === i ? theme.text : color}`,
+                  width: "100%", aspectRatio: "1", borderRadius: 2,
+                  background: done ? theme.lift : (active ? theme.surfaceRaised : "transparent"),
+                  border: `1px solid ${active ? theme.lift : (isToday ? theme.lift : theme.border)}`,
                   display: "flex", alignItems: "center", justifyContent: "center",
-                  boxShadow: isToday ? `0 0 0 2px ${theme.bg}, 0 0 0 3px ${color}` : "none",
                 }}>
-                  {done ? <Check size={13} color={d.kind === "lift" ? theme.heroText : "#FBFAF2"} /> : (d.kind === "lift" ? <Dumbbell size={13} color={color} /> : d.kind === "run" ? <Activity size={13} color={color} /> : null)}
+                  {done ? <Check size={14} color="#0A0A0A" strokeWidth={3} /> : (d.kind === "lift" ? <Dumbbell size={13} color={isToday ? theme.lift : theme.textDim} /> : d.kind === "run" ? <Activity size={13} color={isToday ? theme.lift : theme.textDim} /> : <span style={{ fontSize: 9, color: theme.textFaint, fontFamily: MONO_FONT_STACK }}>—</span>)}
                 </div>
-                <div style={{ fontSize: 12, color: theme.textFaint, textAlign: "center" }}>{label}</div>
+                <div style={{ fontSize: 8.5, color: isToday ? theme.text : theme.textFaint, textAlign: "center", fontFamily: MONO_FONT_STACK, letterSpacing: "0.02em", lineHeight: 1.1, height: 20, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis", maxWidth: "100%" }}>{isRest ? "" : label.slice(0, 6)}</div>
               </button>
             );
           })}
         </div>
-      </Card>
+      </div>
       {editingDayIdx !== null && (
         <DayEditorPanel
           dayIdx={editingDayIdx}
@@ -2045,7 +2587,68 @@ function PlanTab({ settings, onSaveSettings, bodycomp, nutrition, workouts, prog
         />
       )}
 
-      <Card variant="quiet" accent={theme.eat || theme.lift}><SectionTitle>{t("주간 타깃", "Weekly Targets")}</SectionTitle>{[{label:t("운동", "Workouts"), value:`${weekPlan.filter(d=>d.kind!=="rest").length} / 7`},{label:t("단백질", "Protein"), value: roundedTdee ? `${macrosFor(roundedTdee, weight, settings.sex, bodyfat, settings.carbPercent).proteinG}g` : "—"},{label:t("걸음", "Steps"), value: recentAvgSteps ? Math.round(recentAvgSteps).toLocaleString() : "—"}].map((row)=><div key={row.label} style={{ display:"flex", justifyContent:"space-between", padding:"9px 0", borderTop:`1px solid ${theme.border}`, fontSize:13 }}><span style={{ color: theme.textDim }}>{row.label}</span><span style={{ fontWeight:800 }}>{row.value}</span></div>)}</Card>
+      {/* GOAL — compact spec row */}
+      <div>
+        <div style={{ fontSize: 10.5, fontFamily: MONO_FONT_STACK, letterSpacing: "0.16em", textTransform: "uppercase", color: theme.textFaint, marginBottom: 10 }}>{en("목표", "Goal")}</div>
+        <div style={{ display: "flex", gap: 8 }}><GoalButton mode="cut" label={t("감량", "Cut")} /><GoalButton mode="maintain" label={t("유지", "Maintain")} /><GoalButton mode="gain" label={t("증량", "Gain")} /></div>
+      </div>
+
+      {/* CALORIE STRATEGY */}
+      <div>
+        <div style={{ fontSize: 10.5, fontFamily: MONO_FONT_STACK, letterSpacing: "0.16em", textTransform: "uppercase", color: theme.textFaint, marginBottom: 10 }}>{en("칼로리 전략", "Calorie Strategy")}</div>
+        {roundedTdee && weight ? (
+          <GoalTargetsPanel
+            settings={settings}
+            onSaveSettings={onSaveSettings}
+            effectiveTdee={roundedTdee}
+            currentWeight={weight}
+            currentBF={bodyfat}
+            weekPlan={weekPlan}
+            bmr={engine?.bmr}
+          />
+        ) : (
+          <div><RuleLine /><div style={{ padding: "16px 0", fontSize: 12.5, color: theme.textFaint }}>{t("신체 정보가 충분하면 목표 칼로리가 표시됩니다.", "Add body data to show a calorie target.")}</div><RuleLine /></div>
+        )}
+      </div>
+
+      {/* WEEKLY TARGETS — spec table */}
+      <div>
+        <div style={{ fontSize: 10.5, fontFamily: MONO_FONT_STACK, letterSpacing: "0.16em", textTransform: "uppercase", color: theme.textFaint, marginBottom: 4 }}>{en("주간 타깃", "Weekly Targets")}</div>
+        {[
+          { label: en("운동", "Workouts"), value: `${weekPlan.filter(d=>d.kind!=="rest").length} / 7` },
+          { label: en("단백질", "Protein"), value: roundedTdee ? `${macrosFor(roundedTdee, weight, settings.sex, bodyfat, settings.carbPercent).proteinG}g` : "—" },
+          { label: en("활동", "Activity"), value: (ACTIVITY_LEVELS.find((a) => a.id === settings.activity) || ACTIVITY_LEVELS[1]).label(t) },
+        ].map((row) => (
+          <div key={row.label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "13px 0", borderTop: `1px solid ${theme.border}` }}>
+            <span style={{ fontSize: 10.5, fontFamily: MONO_FONT_STACK, letterSpacing: "0.1em", textTransform: "uppercase", color: theme.textDim }}>{row.label}</span>
+            <span style={{ fontSize: 15, fontWeight: 800, color: theme.text, fontVariantNumeric: "tabular-nums" }}>{row.value}</span>
+          </div>
+        ))}
+        <RuleLine />
+      </div>
+
+      {/* HEALTH CONTEXT — demoted, at the bottom */}
+      <div>
+        <button onClick={() => setShowHealthContext(!showHealthContext)} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", background: "none", border: "none", cursor: "pointer", padding: "2px 0 10px" }}>
+          <span style={{ fontSize: 10.5, fontFamily: MONO_FONT_STACK, letterSpacing: "0.16em", textTransform: "uppercase", color: healthActive ? theme.danger : theme.textFaint }}>{en("건강 예외", "Health Context")}</span>
+          <span style={{ fontSize: 10, fontFamily: MONO_FONT_STACK, color: healthActive ? theme.danger : theme.textFaint, display: "flex", alignItems: "center", gap: 5 }}>
+            {healthActive ? en("적용 중", "ACTIVE") : en("꺼짐", "OFF")}
+            {showHealthContext ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+          </span>
+        </button>
+        {showHealthContext && (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 8, paddingTop: 4 }}>
+            <button onClick={() => onSaveSettings({ ...settings, pregnantOrBreastfeeding: !settings.pregnantOrBreastfeeding })} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, padding: "12px 0", borderTop: `1px solid ${theme.border}`, background: "none", border: "none", borderTop: `1px solid ${theme.border}`, color: theme.text, cursor: "pointer", textAlign: "left" }}>
+              <span style={{ fontSize: 13 }}>{t("임신/수유 중", "Pregnant or breastfeeding")}</span>
+              <span style={{ width: 20, height: 20, borderRadius: 2, border: `2px solid ${settings.pregnantOrBreastfeeding ? theme.danger : theme.border}`, background: settings.pregnantOrBreastfeeding ? theme.danger : "transparent", display: "grid", placeItems: "center", flexShrink: 0 }}>{settings.pregnantOrBreastfeeding && <Check size={12} color="#fff" />}</span>
+            </button>
+            <button onClick={() => onSaveSettings({ ...settings, edRecoveryOrClinical: !settings.edRecoveryOrClinical })} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, padding: "12px 0", borderTop: `1px solid ${theme.border}`, background: "none", border: "none", borderTop: `1px solid ${theme.border}`, color: theme.text, cursor: "pointer", textAlign: "left" }}>
+              <span style={{ fontSize: 13 }}>{t("식이장애 회복/임상 관리 중", "ED recovery or clinical supervision")}</span>
+              <span style={{ width: 20, height: 20, borderRadius: 2, border: `2px solid ${settings.edRecoveryOrClinical ? theme.danger : theme.border}`, background: settings.edRecoveryOrClinical ? theme.danger : "transparent", display: "grid", placeItems: "center", flexShrink: 0 }}>{settings.edRecoveryOrClinical && <Check size={12} color="#fff" />}</span>
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -2071,7 +2674,7 @@ const STEP_TIERS = [
 ];
 
 function StepAchievementBar({ steps }) {
-  const { t } = useLang();
+  const { t, en } = useLang();
   const theme = useTheme();
   const max = 10000;
   const pct = Math.min(100, (steps / max) * 100);
@@ -2098,7 +2701,7 @@ function StepAchievementBar({ steps }) {
 }
 
 function StepCountCard() {
-  const { t } = useLang();
+  const { t, en } = useLang();
   const theme = useTheme();
   const [status, setStatus] = useState("loading"); // loading | ok | denied | unavailable
   const [steps, setSteps] = useState(0);
@@ -2130,7 +2733,7 @@ function StepCountCard() {
         {t("오늘의 걸음수", "Today's Steps")}
       </SectionTitle>
       {status === "loading" ? (
-        <div style={{ height: 30, width: "50%", borderRadius: 12, background: theme.surfaceRaised, animation: "hlSkeletonPulse 1.4s ease-in-out infinite" }} />
+        <div style={{ height: 30, width: "50%", borderRadius: 2, background: theme.surfaceRaised, animation: "hlSkeletonPulse 1.4s ease-in-out infinite" }} />
       ) : status === "denied" ? (
         <EmptyState text={t("걸음수 권한이 필요해요. 안드로이드 앱 설정 → 권한에서 '신체 활동'을 허용해주세요.", "Step tracking needs permission — enable 'Physical activity' in the app's Android settings.")} />
       ) : (
@@ -2147,12 +2750,12 @@ function StepCountCard() {
 }
 
 function DayLogCard({ dayLogs, setDayLogs }) {
-  const { t } = useLang();
+  const { t, en } = useLang();
   const theme = useTheme();
   const today = todayStr();
   const todayEntry = dayLogs.find((d) => d.date === today);
 
-  const [editing, setEditing] = useState(!todayEntry);
+  const [editing, setEditing] = useState(!todayEntry || !hasCheckinData(todayEntry));
   const [showHistory, setShowHistory] = useState(false);
   const [mood, setMood] = useState(todayEntry?.mood || 0);
   const [energy, setEnergy] = useState(todayEntry?.energy || 0);
@@ -2183,7 +2786,15 @@ function DayLogCard({ dayLogs, setDayLogs }) {
   }, [mood, energy, sleep, note, editing, todayEntry, today]);
 
   const save = () => {
-    const entry = { id: todayEntry?.id || uid(), date: today, mood, energy, sleep, note };
+    const entry = {
+      ...(todayEntry || {}),
+      id: todayEntry?.id || uid(),
+      date: today,
+      mood,
+      energy,
+      sleep,
+      note,
+    };
     setDayLogs([entry, ...dayLogs.filter((d) => d.date !== today)]);
     setEditing(false);
     deleteKey("dayLogDraft");
@@ -2205,7 +2816,7 @@ function DayLogCard({ dayLogs, setDayLogs }) {
           return (
             <button key={n} onClick={() => onChange(n)} onTouchStart={(e) => e.stopPropagation()} onTouchMove={(e) => e.stopPropagation()} onTouchEnd={(e) => e.stopPropagation()}
               style={{
-                width: 28, height: 28, borderRadius: 12, fontSize: 12, fontWeight: 700, cursor: "pointer",
+                width: 28, height: 28, borderRadius: 2, fontSize: 12, fontWeight: 700, cursor: "pointer",
                 border: active ? `2px solid ${theme.text}` : "1px solid transparent",
                 background: mixHex(theme.surfaceRaised, theme.lift, stepT),
                 color: theme.text,
@@ -2245,9 +2856,9 @@ function DayLogCard({ dayLogs, setDayLogs }) {
     )}
     <Card>
       {streakMilestone && (
-        <div style={{
+        <div ref={trackInnerRef} style={{
           display: "flex", alignItems: "center", gap: 8, background: tint(theme.lift, 0.18),
-          border: `1px solid ${theme.lift}`, borderRadius: 12, padding: "8px 12px", marginBottom: 12,
+          border: `1px solid ${theme.lift}`, borderRadius: 2, padding: "8px 12px", marginBottom: 12,
         }}>
           <Award size={16} color={theme.lift} style={{ flexShrink: 0 }} />
           <span style={{ fontSize: 12, fontWeight: 700, color: theme.lift, fontFamily: FONT_STACK, fontStyle: "italic" }}>
@@ -2292,7 +2903,9 @@ function DayLogCard({ dayLogs, setDayLogs }) {
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             <div style={{ fontSize: 12.5, color: theme.textDim }}>
-              {t("기분", "Mood")} {todayEntry.mood}/5 · {t("에너지", "Energy")} {todayEntry.energy}/5 · {t("수면", "Sleep")} {todayEntry.sleep}/5{todayEntry.activityLevel ? ` · ${t("활동량", "Activity")} ${todayEntry.activityLevel}/5` : ""}
+              {hasCheckinData(todayEntry)
+                ? `${t("기분", "Mood")} ${todayEntry.mood || "—"}/5 · ${t("에너지", "Energy")} ${todayEntry.energy || "—"}/5 · ${t("수면", "Sleep")} ${todayEntry.sleep || "—"}/5${todayEntry.activityLevel ? ` · ${t("활동량", "Activity")} ${todayEntry.activityLevel}/5` : ""}`
+                : t("휴식 완료 기록만 있습니다. 체크인을 추가해보세요.", "Rest completed. Add a check-in when ready.")}
             </div>
             {todayEntry.note && (
               <div style={{ display: "flex", gap: 6, alignItems: "flex-start" }}>
@@ -2391,7 +3004,7 @@ function DayLogStack({ sorted, remove, theme, t }) {
                 pointerEvents: active ? "auto" : "none",
                 transform: `translateY(${offset * 16}px) scale(${1 - Math.abs(offset) * 0.06})`,
                 transition: "transform 0.25s ease, opacity 0.25s ease, box-shadow 0.25s ease",
-                background: theme.darkPanel || theme.surface, border: `1px solid ${theme.border}`, borderRadius: 12,
+                background: theme.darkPanel || theme.surface, border: `1px solid ${theme.border}`, borderRadius: 2,
                 padding: "12px 14px", boxSizing: "border-box",
                 boxShadow: active ? cardShadow(theme, 0.22) : cardShadow(theme, 0.08),
               }}>
@@ -2433,7 +3046,7 @@ function DayLogStack({ sorted, remove, theme, t }) {
 }
 
 function ProgramEditor({ program, onChange, onDelete }) {
-  const { t } = useLang();
+  const { t, en } = useLang();
   const theme = useTheme();
   const updateExercise = (idx, field, value) => {
     const next = program.exercises.map((ex, i) => (
@@ -2441,7 +3054,7 @@ function ProgramEditor({ program, onChange, onDelete }) {
     ));
     onChange({ ...program, exercises: next });
   };
-  const addExercise = () => onChange({ ...program, exercises: [...program.exercises, { name: "", sets: 2, repRange: "6-12", muscle: null }] });
+  const addExercise = () => onChange({ ...program, exercises: [...program.exercises, { id: uid(), name: "", sets: 2, repRange: "6-12", muscle: null, warmupSets: 1 }] });
   const removeExercise = (idx) => onChange({ ...program, exercises: program.exercises.filter((_, i) => i !== idx) });
 
   return (
@@ -2460,6 +3073,7 @@ function ProgramEditor({ program, onChange, onDelete }) {
                 <X size={14} />
               </button>
             </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 120px", gap: 6 }}>
             <Select value={ex.muscle || ""} onChange={(e) => updateExercise(idx, "muscle", e.target.value || null)}
               style={{ padding: "6px 8px", fontSize: 12, minHeight: 36 }}>
               <option value="">{t("부위 선택 (선택)", "Muscle group (optional)")}</option>
@@ -2467,6 +3081,11 @@ function ProgramEditor({ program, onChange, onDelete }) {
                 <option key={id} value={id}>{g.label(t)}</option>
               ))}
             </Select>
+            <Select value={String(ex.warmupSets ?? 1)} onChange={(e) => updateExercise(idx, "warmupSets", Number(e.target.value))}
+              style={{ padding: "6px 8px", fontSize: 12, minHeight: 36 }}>
+              {[0,1,2,3,4,5].map((n) => <option key={n} value={n}>{t(`웜업 ${n}`, `${n} warmup`)}</option>)}
+            </Select>
+            </div>
           </div>
         ))}
         {program.exercises.length === 0 && (
@@ -2474,7 +3093,7 @@ function ProgramEditor({ program, onChange, onDelete }) {
         )}
       </div>
       <button onClick={addExercise}
-        style={{ background: "none", border: `1px dashed ${theme.border}`, borderRadius: 12, padding: "6px 10px", color: theme.textDim, fontSize: 12, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
+        style={{ background: "none", border: `1px dashed ${theme.border}`, borderRadius: 2, padding: "6px 10px", color: theme.textDim, fontSize: 12, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
         <Plus size={12} /> {t("운동 추가", "Add Exercise")}
       </button>
       {onDelete && (
@@ -2487,7 +3106,7 @@ function ProgramEditor({ program, onChange, onDelete }) {
 }
 
 function DayEditorPanel({ dayIdx, weekPlan, setWeekPlan, programs, setPrograms, onClose }) {
-  const { lang, t } = useLang();
+  const { lang, t, en } = useLang();
   const theme = useTheme();
   const entry = weekPlan[dayIdx];
   const [kind, setKind] = useState(entry.kind);
@@ -2529,7 +3148,7 @@ function DayEditorPanel({ dayIdx, weekPlan, setWeekPlan, programs, setPrograms, 
 
   const editingProgram = programs.find((p) => p.id === editingProgramId);
   const chipStyle = (active) => ({
-    padding: "8px 4px", borderRadius: 12, fontSize: 12.5, flex: 1,
+    padding: "8px 4px", borderRadius: 2, fontSize: 12.5, flex: 1,
     border: `1px solid ${active ? theme.lift : theme.border}`,
     background: active ? tint(theme.lift, 0.16) : "transparent",
     color: theme.text, cursor: "pointer",
@@ -2554,7 +3173,7 @@ function DayEditorPanel({ dayIdx, weekPlan, setWeekPlan, programs, setPrograms, 
             {programs.map((p) => (
               <button key={p.id} onClick={() => setProgramId(p.id)}
                 style={{
-                  padding: "7px 12px", borderRadius: 12, fontSize: 12.5,
+                  padding: "7px 12px", borderRadius: 2, fontSize: 12.5,
                   border: `1px solid ${programId === p.id ? theme.lift : theme.border}`,
                   background: programId === p.id ? tint(theme.lift, 0.16) : "transparent",
                   color: theme.text, cursor: "pointer",
@@ -2563,7 +3182,7 @@ function DayEditorPanel({ dayIdx, weekPlan, setWeekPlan, programs, setPrograms, 
               </button>
             ))}
             <button onClick={() => setShowNewProgram((v) => !v)}
-              style={{ padding: "7px 12px", borderRadius: 12, fontSize: 12.5, border: `1px dashed ${theme.border}`, background: "transparent", color: theme.textDim, cursor: "pointer" }}>
+              style={{ padding: "7px 12px", borderRadius: 2, fontSize: 12.5, border: `1px dashed ${theme.border}`, background: "transparent", color: theme.textDim, cursor: "pointer" }}>
               + {t("새 프로그램", "New Program")}
             </button>
           </div>
@@ -2612,8 +3231,8 @@ function DayEditorPanel({ dayIdx, weekPlan, setWeekPlan, programs, setPrograms, 
   );
 }
 
-function GoalTargetsPanel({ settings, onSaveSettings, effectiveTdee, currentWeight, currentBF, weekPlan }) {
-  const { t } = useLang();
+function GoalTargetsPanel({ settings, onSaveSettings, effectiveTdee, currentWeight, currentBF, weekPlan, bmr = null }) {
+  const { t, en } = useLang();
   const theme = useTheme();
   const mode = settings.goalMode || "cut";
   const setMode = (m, e) => { if (e) e.stopPropagation(); onSaveSettings({ ...settings, goalMode: m }); };
@@ -2640,10 +3259,10 @@ function GoalTargetsPanel({ settings, onSaveSettings, effectiveTdee, currentWeig
       ].map((m) => (
         <button key={m.id} onClick={(e) => setMode(m.id, e)} onTouchStart={(e) => e.stopPropagation()} onTouchMove={(e) => e.stopPropagation()} onTouchEnd={(e) => e.stopPropagation()}
           style={{
-            flex: 1, padding: 9, borderRadius: 12, fontSize: 12.5, cursor: "pointer",
+            flex: 1, minHeight: 42, borderRadius: 2, fontSize: 12, cursor: "pointer",
             border: `1px solid ${mode === m.id ? theme.lift : theme.border}`,
-            background: mode === m.id ? tint(theme.lift, 0.16) : "transparent",
-            color: theme.text, fontWeight: mode === m.id ? 700 : 500,
+            background: mode === m.id ? theme.lift : "transparent",
+            color: mode === m.id ? (theme.heroText || "#0A0A0A") : theme.textDim, fontWeight: 600,
           }}>
           {m.label}
         </button>
@@ -2681,26 +3300,36 @@ function GoalTargetsPanel({ settings, onSaveSettings, effectiveTdee, currentWeig
     </div>
   );
 
-  const TierRow = ({ tierKey, label, target, macros, selected, onSelect }) => (
+  const TierRow = ({ tierKey, label, target, macros, selected, onSelect, limitNote, limitWarning = false }) => (
     <button onClick={onSelect} onTouchStart={(e) => e.stopPropagation()} onTouchMove={(e) => e.stopPropagation()} onTouchEnd={(e) => e.stopPropagation()} style={{
-      display: "flex", alignItems: "flex-start", gap: 8, width: "100%", textAlign: "left",
-      background: selected ? tint(theme.lift, 0.1) : "transparent",
-      border: `1px solid ${selected ? theme.lift : theme.border}`,
-      borderRadius: 12, padding: 9, cursor: "pointer",
+      display: "flex", alignItems: "flex-start", gap: 12, width: "100%", textAlign: "left",
+      background: "transparent",
+      border: "none", borderTop: `1px solid ${theme.border}`,
+      borderLeft: `2px solid ${selected ? theme.lift : "transparent"}`,
+      padding: "13px 0 13px 12px", cursor: "pointer",
     }}>
-      <div style={{
-        width: 15, height: 15, borderRadius: "50%", flexShrink: 0, marginTop: 2,
-        border: `2px solid ${selected ? theme.lift : theme.border}`,
-        background: selected ? theme.lift : "transparent",
-      }} />
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 2 }}>
-        <div style={{ display: "flex", justifyContent: "space-between" }}>
-          <span style={{ fontSize: 12.5, color: theme.text, fontWeight: selected ? 700 : 500 }}>{label}</span>
-          <span style={{ fontSize: 12.5, color: theme.text, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{Math.round(target)} kcal</span>
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 4 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+          <span style={{ fontSize: 13, color: selected ? theme.lift : theme.text, fontWeight: selected ? 700 : 500 }}>{label}</span>
+          <span style={{ fontSize: 15, color: theme.text, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>{Math.round(target)} <span style={{ fontSize: 11, color: theme.textDim, fontFamily: MONO_FONT_STACK }}>kcal</span></span>
         </div>
-        <div style={{ fontSize: 12, color: theme.textFaint }}>
+        <div style={{ fontSize: 11.5, color: theme.textFaint, fontFamily: MONO_FONT_STACK, letterSpacing: "0.03em" }}>
           {t("단백", "P")} {macros.proteinG}g · {t("탄수", "C")} {macros.carbG}g · {t("지방", "F")} {macros.fatG}g
         </div>
+        {limitNote && (
+          <div style={{
+            fontSize: 10.5,
+            color: limitWarning ? theme.danger : theme.textFaint,
+            fontFamily: MONO_FONT_STACK,
+            letterSpacing: "0.02em",
+            lineHeight: 1.4,
+            marginTop: 2,
+            fontWeight: limitWarning ? 700 : 500,
+          }}>
+            {limitWarning && <span aria-hidden="true" style={{ marginRight: 5 }}>⚠</span>}
+            {limitNote}
+          </div>
+        )}
       </div>
     </button>
   );
@@ -2746,12 +3375,12 @@ function GoalTargetsPanel({ settings, onSaveSettings, effectiveTdee, currentWeig
 
   // cut
   const activeTier = settings.cutTier || "standard";
-  const bmrForFloor = (settings.ageYears && settings.heightCm && currentWeight)
-    ? bmrMifflin(settings.sex || "male", settings.ageYears, settings.heightCm, currentWeight)
-    : null;
+  // Intake floor uses the engine's shared BMR estimate (Mifflin → Katch →
+  // fallback) so it's identical to the target computed on other screens.
+  const bmrForFloor = bmr ?? null;
   const standardTarget = dailyTargetForRate(effectiveTdee, currentWeight, CUT_TIERS.standard.frac, bmrForFloor, settings.sex);
   const cycle = trainingDays > 0 ? cycleTargets(Math.round(standardTarget), trainingDays) : null;
-  const cheatBudget = specialDayBudget(Math.round(effectiveTdee), Math.round(standardTarget), 1);
+  const cheatBudget = specialDayBudget(Math.round(effectiveTdee), Math.round(standardTarget), 1, bmrForFloor, settings.sex);
 
   return (
     <div>
@@ -2777,25 +3406,45 @@ function GoalTargetsPanel({ settings, onSaveSettings, effectiveTdee, currentWeig
               ) : null;
             })()}
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {Object.entries(CUT_TIERS).map(([key, def]) => {
-                const target = dailyTargetForRate(effectiveTdee, currentWeight, def.frac, bmrForFloor, settings.sex);
-                const macros = macrosFor(target, currentWeight, settings.sex, currentBF, carbPercent);
-                const range = recommendedLossRateRange(settings.sex, currentBF);
-                const outOfRange = range && (def.frac < range[0] || def.frac > range[1]);
-                return (
-                  <div key={key}>
-                    <TierRow tierKey={key} label={def.label(t)} target={target} macros={macros}
-                      selected={activeTier === key} onSelect={(e) => setTier(key, e)} />
-                    {outOfRange && activeTier === key && (
-                      <div style={{ fontSize: 12, color: theme.danger, marginTop: 4, paddingLeft: 4, lineHeight: 1.4 }}>
-                        {def.frac > range[1]
-                          ? t("현재 체지방 기준 권장 범위보다 빨라요.", "Faster than the recommended range for your current body fat.")
-                          : t("권장 범위보다 느려요 — 안전하지만 목표까지 더 오래 걸려요.", "Slower than the recommended range — safe, but will take longer to reach your goal.")}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
+              {(() => {
+                const clinicalFloor = settings.sex === "female" ? 1200 : 1500;
+                const floorVal = Math.max(clinicalFloor, bmrForFloor || 0);
+                const floorLabel = (bmrForFloor && bmrForFloor >= clinicalFloor)
+                  ? `BMR ~${Math.round(bmrForFloor)}`
+                  : `${Math.round(floorVal)}`;
+                return Object.entries(CUT_TIERS).map(([key, def]) => {
+                  // Single source: computeCutTarget owns the floor/cap logic and
+                  // reports the real achievable rate, so the note can never drift
+                  // out of sync with the number it's explaining.
+                  const cut = computeCutTarget(effectiveTdee, currentWeight, def.frac, bmrForFloor, settings.sex);
+                  const target = cut.target;
+                  const macros = macrosFor(target, currentWeight, settings.sex, currentBF, carbPercent);
+                  const range = recommendedLossRateRange(settings.sex, currentBF);
+                  const outOfRange = range && (def.frac < range[0] || def.frac > range[1]);
+                  const limited = cut.flooredByIntake || cut.deficitCapped;
+                  const effRatePct = cut.effectiveRateFrac * 100;
+                  const limitNote = !limited ? null
+                    : cut.flooredByIntake
+                      ? t(`최소 섭취 한도(${floorLabel}) 도달 · 실제 ~${effRatePct.toFixed(2)}%/주`,
+                          `At min-intake limit (${floorLabel}) · actual ~${effRatePct.toFixed(2)}%/wk`)
+                      : t(`안전 상한으로 제한됨 · 실제 ~${effRatePct.toFixed(2)}%/주`,
+                          `Capped for safety · actual ~${effRatePct.toFixed(2)}%/wk`);
+                  return (
+                    <div key={key}>
+                      <TierRow tierKey={key} label={def.label(t)} target={target} macros={macros}
+                        selected={activeTier === key} onSelect={(e) => setTier(key, e)}
+                        limitNote={limitNote} limitWarning={cut.flooredByIntake} />
+                      {outOfRange && activeTier === key && !limited && (
+                        <div style={{ fontSize: 12, color: theme.danger, marginTop: 4, paddingLeft: 4, lineHeight: 1.4 }}>
+                          {def.frac > range[1]
+                            ? t("현재 체지방 기준 권장 범위보다 빨라요.", "Faster than the recommended range for your current body fat.")
+                            : t("권장 범위보다 느려요 — 안전하지만 목표까지 더 오래 걸려요.", "Slower than the recommended range — safe, but will take longer to reach your goal.")}
+                        </div>
+                      )}
+                    </div>
+                  );
+                });
+              })()}
             </div>
             {cycle && (
               <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${theme.border}`, display: "flex", flexDirection: "column", gap: 6 }}>
@@ -2804,7 +3453,7 @@ function GoalTargetsPanel({ settings, onSaveSettings, effectiveTdee, currentWeig
                 </div>
                 <Stat label={t("운동일 목표", "Training day")} value={`${cycle.training} kcal`} />
                 <Stat label={t("휴식일 목표", "Rest day")} value={`${cycle.rest} kcal`} />
-                <Stat label={t("치팅데이 예산 (주 1회)", "Cheat day budget (1x/wk)")} value={`${Math.round(cheatBudget)} kcal`} />
+                <Stat label={t("치팅데이 예산 (주 1회)", "Cheat day budget (1x/wk)")} value={`${cheatBudget.special} kcal`} />
               </div>
             )}
           </>
@@ -2817,7 +3466,7 @@ function GoalTargetsPanel({ settings, onSaveSettings, effectiveTdee, currentWeig
 
 
 function Dashboard({ settings, bodycomp, workouts, nutrition, programs, setPrograms, weekPlan, setWeekPlan, dayLogs, setDayLogs, onSaveSettings, recentAvgSteps }) {
-  const { lang, t } = useLang();
+  const { lang, t, en } = useLang();
   const theme = useTheme();
   const hasGoals = settings.startWeight > 0;
   const [flipped, setFlipped] = useState(false);
@@ -2855,6 +3504,8 @@ function Dashboard({ settings, bodycomp, workouts, nutrition, programs, setProgr
     }
   };
   const [flipAnim, setFlipAnim] = useState(false);
+  const flipTimerRef = useRef(null);
+  useEffect(() => () => { if (flipTimerRef.current) clearTimeout(flipTimerRef.current); }, []);
   const [editing, setEditing] = useState(!hasGoals);
   const [draft, setDraft] = useState(settings);
   useEffect(() => setDraft(settings), [settings]);
@@ -2871,7 +3522,7 @@ function Dashboard({ settings, bodycomp, workouts, nutrition, programs, setProgr
     const byDate = {};
     sorted.forEach((b) => { byDate[b.date] = b.weight; }); // later same-date entries win
     return Object.entries(byDate)
-      .filter(([date]) => new Date(date) >= cutoff)
+      .filter(([date]) => parseLocalDate(date) >= cutoff)
       .sort((a, b) => a[0].localeCompare(b[0]))
       .map(([date, weight]) => ({ date, weight }));
   })();
@@ -2884,14 +3535,14 @@ function Dashboard({ settings, bodycomp, workouts, nutrition, programs, setProgr
 
   // weekly pace from last 14 days of bodycomp entries
   const recentCut = sorted.filter((e) => {
-    const days = (nowDate() - new Date(e.date)) / 86400000;
+    const days = (nowDate() - parseLocalDate(e.date)) / 86400000;
     return days <= 21;
   });
   let weeklyRate = null;
   if (recentCut.length >= 2) {
     const first = recentCut[0];
     const last = recentCut[recentCut.length - 1];
-    const days = (new Date(last.date) - new Date(first.date)) / 86400000;
+    const days = (parseLocalDate(last.date) - parseLocalDate(first.date)) / 86400000;
     if (days > 0) weeklyRate = ((first.weight - last.weight) / days) * 7;
   }
   const remainingKg = (currentWeight || 0) - goalMid;
@@ -2942,8 +3593,8 @@ function Dashboard({ settings, bodycomp, workouts, nutrition, programs, setProgr
     return null;
   })();
 
-  const daysSinceStart = settings.startDate ? Math.max(0, Math.round((nowDate() - new Date(settings.startDate + "T00:00:00")) / 86400000)) : null;
-  const daysSinceLastWeighIn = sorted.length ? Math.round((nowDate() - new Date(sorted[sorted.length - 1].date)) / 86400000) : null;
+  const daysSinceStart = settings.startDate ? Math.max(0, Math.round((nowDate() - parseLocalDate(settings.startDate)) / 86400000)) : null;
+  const daysSinceLastWeighIn = sorted.length ? Math.round((nowDate() - parseLocalDate(sorted[sorted.length - 1].date)) / 86400000) : null;
 
   // A simple, priority-ordered "what should I actually do next" suggestion —
   // picks the single most useful thing to act on right now rather than
@@ -3003,14 +3654,13 @@ function Dashboard({ settings, bodycomp, workouts, nutrition, programs, setProgr
     [settings, bodycomp, nutrition, workouts, currentWeight, recentAvgSteps]
   );
   const observed = useMemo(() => computeObservedTdee(bodycomp, nutrition, 14), [bodycomp, nutrition]);
-  // Only an explicitly-accepted calibration (see TdeeTab) changes the
-  // baseline; otherwise use the fresh model estimate. This is deliberately
-  // NOT the old auto-blended value — targets shouldn't silently drift day
-  // to day from observed data alone.
-  const effectiveTdee = settings.acceptedTdee ?? (engine ? Math.round(engine.initialTdee / 10) * 10 : (observed ? observed.tdee : null));
+  // Shared targetTdee baseline (see helper) keeps this identical to every
+  // other screen; observed-only is a last-resort display fallback when the
+  // model can't run yet.
+  const effectiveTdee = targetTdee(settings, engine) ?? (observed ? observed.tdee : null);
   const activeTarget = useMemo(
-    () => (effectiveTdee ? computeActiveTarget(settings, effectiveTdee, currentWeight, currentBF) : null),
-    [settings, effectiveTdee, currentWeight, currentBF]
+    () => (effectiveTdee ? computeActiveTarget(settings, effectiveTdee, currentWeight, currentBF, engine?.bmr) : null),
+    [settings, effectiveTdee, currentWeight, currentBF, engine?.bmr]
   );
 
   const [editingName, setEditingName] = useState(false);
@@ -3044,7 +3694,7 @@ function Dashboard({ settings, bodycomp, workouts, nutrition, programs, setProgr
               <TextInput autoFocus value={nameDraft} onChange={(e) => setNameDraft(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && saveName()} placeholder={t("이름 입력", "Enter name")} style={{ flex: 1 }} />
               <button onClick={saveName}
-                style={{ background: theme.lift, border: "none", borderRadius: 12, padding: "0 14px", color: "#FBFAF2", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>
+                style={{ background: theme.lift, border: "none", borderRadius: 2, padding: "0 14px", color: theme.heroText, fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>
                 {t("저장", "Save")}
               </button>
             </div>
@@ -3056,7 +3706,7 @@ function Dashboard({ settings, bodycomp, workouts, nutrition, programs, setProgr
         onClick={() => {
           if (flipAnim) return; // ignore rapid re-taps while a flip is already in progress
           setFlipAnim(true);
-          setTimeout(() => { setFlipped((f) => !f); setFlipAnim(false); }, 150);
+          flipTimerRef.current = setTimeout(() => { setFlipped((f) => !f); setFlipAnim(false); }, 150);
         }}
         style={{
           background: flipped ? theme.surface : tint(theme.lift, 0.075),
@@ -3119,6 +3769,7 @@ function Dashboard({ settings, bodycomp, workouts, nutrition, programs, setProgr
                 currentWeight={currentWeight}
                 currentBF={currentBF}
                 weekPlan={weekPlan}
+                bmr={engine?.bmr}
               />
             </div>
           )}
@@ -3246,7 +3897,7 @@ function Dashboard({ settings, bodycomp, workouts, nutrition, programs, setProgr
                         style={{ background: "none", border: "none", padding: 0, cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 4, flex: 1 }}>
                         <div style={{ fontSize: 12, color: isToday ? theme.text : theme.textFaint, fontWeight: isToday ? 700 : 500 }}>{WEEKDAY_LABELS[lang][i]}</div>
                         <div style={{
-                          width: "100%", aspectRatio: "1", borderRadius: 12,
+                          width: "100%", aspectRatio: "1", borderRadius: 2,
                           background: done ? color : "transparent",
                           border: `1.5px solid ${editingDayIdx === i ? theme.text : color}`,
                           display: "flex", alignItems: "center", justifyContent: "center",
@@ -3362,7 +4013,7 @@ function Dashboard({ settings, bodycomp, workouts, nutrition, programs, setProgr
                 <button onClick={() => setReorderMode(false)}
                   style={{
                     background: tint(theme.lift, 0.16), border: `1px solid ${theme.lift}`, color: theme.lift,
-                    cursor: "pointer", fontSize: 12, fontWeight: 700, padding: "5px 10px", borderRadius: 12,
+                    cursor: "pointer", fontSize: 12, fontWeight: 700, padding: "5px 10px", borderRadius: 2,
                   }}>
                   {t("완료", "Done")}
                 </button>
@@ -3377,7 +4028,7 @@ function Dashboard({ settings, bodycomp, workouts, nutrition, programs, setProgr
                   <div style={{
                     display: "flex", alignItems: "center", justifyContent: "space-between",
                     background: theme.surfaceRaised, border: `1px solid ${theme.border}`,
-                    borderRadius: 12, padding: "6px 10px", marginBottom: 6,
+                    borderRadius: 2, padding: "6px 10px", marginBottom: 6,
                   }}>
                     <span style={{ fontSize: 12, color: theme.textDim, display: "flex", alignItems: "center", gap: 6 }}>
                       <GripVertical size={13} color={theme.textFaint} /> {cardLabels[id]}
@@ -3427,6 +4078,7 @@ function FullscreenPortal({ children, scrollable = false, accent }) {
   const overlay = (
     <div data-no-tab-swipe="true" style={{
       position: "fixed", inset: 0, zIndex: 1000, background: theme.bg,
+      animation: "hlSheetIn 0.34s cubic-bezier(0.22, 1, 0.36, 1)",
       display: "flex", flexDirection: "column", boxSizing: "border-box",
       borderTop: `3px solid ${accent || theme.lift}`,
       paddingTop: "max(18px, env(safe-area-inset-top))",
@@ -3446,13 +4098,121 @@ function ExecutionHeader({ eyebrow, title, meta, onClose, accent }) {
   return (
     <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 14, paddingBottom: 14, marginBottom: 18, borderBottom: `1px solid ${theme.border}` }}>
       <div>
-        <div style={{ color: accent || theme.lift, fontSize: 12, fontWeight: 800, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 5 }}>{eyebrow}</div>
-        <div style={{ color: theme.text, fontSize: 22, lineHeight: 1.1, fontWeight: 800 }}>{title}</div>
-        {meta && <div style={{ color: theme.textDim, fontSize: 12.5, marginTop: 6 }}>{meta}</div>}
+        <div style={{ color: accent || theme.lift, fontSize: 11, fontWeight: 600, letterSpacing: "0.18em", textTransform: "uppercase", marginBottom: 7, fontFamily: MONO_FONT_STACK }}>{eyebrow}</div>
+        <div style={{ color: theme.text, fontSize: 26, lineHeight: 1.05, fontWeight: 600, fontFamily: SERIF_FONT_STACK, fontStyle: "italic", letterSpacing: "-0.01em" }}>{title}</div>
+        {meta && <div style={{ color: theme.textDim, fontSize: 11, marginTop: 8, fontFamily: MONO_FONT_STACK, letterSpacing: "0.08em", textTransform: "uppercase" }}>{meta}</div>}
       </div>
-      {onClose && <IconBtn onClick={onClose} label="Close"><X size={19} /></IconBtn>}
+      {onClose && <IconBtn onClick={onClose} label="Close"><X size={18} /></IconBtn>}
     </div>
   );
+}
+
+// In-card vertical scroll picker. No popup — scroll/drag to snap a value into
+// the centered highlight. Used in the guided session so weight/reps can be set
+// without opening a dialog. Lives inside a FullscreenPortal (which is
+// overflow:hidden), so its own vertical scroll doesn't fight a page scroll.
+function InlineWheel({ label, value, onChange, min = 0, max = 100, step = 1, unit = "", accent }) {
+  const theme = useTheme();
+  const ref = useRef(null);
+  const settleRef = useRef(null);
+  const suppressRef = useRef(false);
+  const ITEM_H = 40;
+  const values = useMemo(() => {
+    const out = [];
+    const count = Math.floor((max - min) / step);
+    for (let i = 0; i <= count; i++) out.push(Number((min + i * step).toFixed(2)));
+    return out;
+  }, [min, max, step]);
+  const selected = value === "" || value == null ? null : Number(value);
+  const idx = selected == null ? -1 : Math.round((selected - min) / step);
+  // Keep the scroll position in sync when the value changes from outside
+  // (carry-over, +/- elsewhere, warmup suggestions).
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || idx < 0) return;
+    const target = idx * ITEM_H;
+    if (Math.abs(el.scrollTop - target) < 1) return;
+    suppressRef.current = true;
+    el.scrollTop = target;
+    const t = setTimeout(() => { suppressRef.current = false; }, 80);
+    return () => clearTimeout(t);
+  }, [idx]);
+  const onScroll = () => {
+    if (suppressRef.current) return;
+    const el = ref.current;
+    if (!el) return;
+    clearTimeout(settleRef.current);
+    settleRef.current = setTimeout(() => {
+      const i = Math.max(0, Math.min(values.length - 1, Math.round(el.scrollTop / ITEM_H)));
+      const v = values[i];
+      if (v != null && String(v) !== String(selected)) onChange(String(v));
+    }, 90);
+  };
+  return (
+    <div style={{ flex: 1, minWidth: 0 }}>
+      <div style={{ fontSize: 10, color: theme.textFaint, fontFamily: MONO_FONT_STACK, letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: 6, textAlign: "center" }}>{label}</div>
+      <div style={{ position: "relative", height: ITEM_H * 3, background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 8, overflow: "hidden" }}>
+        <div style={{ position: "absolute", top: ITEM_H, left: 6, right: 6, height: ITEM_H, border: `1.5px solid ${accent || theme.lift}`, borderRadius: 6, pointerEvents: "none", zIndex: 1 }} />
+        <div ref={ref} onScroll={onScroll} data-no-tab-swipe="true" style={{ height: "100%", overflowY: "auto", scrollSnapType: "y mandatory", paddingTop: ITEM_H, paddingBottom: ITEM_H, WebkitOverflowScrolling: "touch", scrollbarWidth: "none" }}>
+          {values.map((n) => (
+            <div key={n} onClick={() => onChange(String(n))} style={{ height: ITEM_H, display: "flex", alignItems: "center", justifyContent: "center", scrollSnapAlign: "center", fontSize: selected === n ? 24 : 18, lineHeight: 1, fontWeight: selected === n ? 850 : 500, color: selected === n ? (accent || theme.lift) : theme.textFaint, cursor: "pointer", fontVariantNumeric: "tabular-nums", transition: "color .08s" }}>
+              {n}{unit ? <span style={{ fontSize: 12, fontWeight: 500, marginLeft: 3, opacity: 0.7 }}>{unit}</span> : null}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+function NumericWheelButton({ label, value, onChange, min = 0, max = 100, step = 1, unit = "", accent, compact = false, stepper = false, stepperStep = null }) {
+  const { t } = useLang();
+  const theme = useTheme();
+  const [open, setOpen] = useState(false);
+  const selectedRef = useRef(null);
+  const values = useMemo(() => {
+    const out = [];
+    const count = Math.floor((max - min) / step);
+    for (let i = 0; i <= count; i++) out.push(Number((min + i * step).toFixed(2)));
+    return out;
+  }, [min, max, step]);
+  const selected = value === "" || value == null ? null : Number(value);
+  const clampValue = (next) => Math.min(max, Math.max(min, Number(next.toFixed(2))));
+  const adjust = (delta) => onChange(String(clampValue((selected ?? min) + delta)));
+  useEffect(() => {
+    if (!open) return;
+    const timer = setTimeout(() => selectedRef.current?.scrollIntoView({ block: "center", behavior: "auto" }), 20);
+    return () => clearTimeout(timer);
+  }, [open, selected]);
+  return <>
+    {stepper ? (
+      <div data-no-tab-swipe="true" style={{ display: "flex", alignItems: "stretch", gap: 8, width: "100%" }}>
+        <button type="button" data-no-tab-swipe="true" onClick={() => adjust(-(stepperStep ?? step))} aria-label={`${label} -`} style={{ flex: "0 0 auto", width: 56, background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 8, color: theme.text, fontSize: 24, fontWeight: 800, cursor: "pointer", lineHeight: 1 }}>−</button>
+        <button type="button" data-no-tab-swipe="true" onClick={() => setOpen(true)} style={{ flex: 1, minWidth: 0, background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 8, padding: compact ? "6px 6px" : "8px 10px", color: theme.text, textAlign: "center", cursor: "pointer" }}>
+          <div style={{ fontSize: 10, color: theme.textFaint, fontFamily: MONO_FONT_STACK, letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: 2 }}>{label}</div>
+          <div style={{ fontSize: compact ? 22 : 34, fontWeight: 800, fontVariantNumeric: "tabular-nums", lineHeight: 1 }}>{selected == null ? "—" : selected}<span style={{ fontSize: 12, color: theme.textDim, marginLeft: 4 }}>{unit}</span></div>
+        </button>
+        <button type="button" data-no-tab-swipe="true" onClick={() => adjust(stepperStep ?? step)} aria-label={`${label} +`} style={{ flex: "0 0 auto", width: 56, background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 8, color: theme.text, fontSize: 24, fontWeight: 800, cursor: "pointer", lineHeight: 1 }}>＋</button>
+      </div>
+    ) : (
+    <button type="button" data-no-tab-swipe="true" onClick={() => setOpen(true)} style={{ width: "100%", background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 8, padding: compact ? "8px 8px" : "12px 10px", color: theme.text, textAlign: "center", cursor: "pointer" }}>
+      <div style={{ fontSize: 10, color: theme.textFaint, fontFamily: MONO_FONT_STACK, letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: 6 }}>{label}</div>
+      <div style={{ fontSize: compact ? 22 : 40, fontWeight: 800, fontVariantNumeric: "tabular-nums", lineHeight: 1 }}>{selected == null ? "—" : selected}<span style={{ fontSize: 12, color: theme.textDim, marginLeft: 4 }}>{unit}</span></div>
+    </button>
+    )}
+    {open && createPortal(<div role="presentation" data-no-tab-swipe="true" style={{ position: "fixed", inset: 0, zIndex: 1600, background: "rgba(0,0,0,.64)", display: "flex", alignItems: "flex-end", justifyContent: "center" }} onClick={() => setOpen(false)}>
+      <div role="dialog" onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 520, background: theme.surface, borderTop: `2px solid ${accent || theme.lift}`, padding: "14px 16px calc(18px + env(safe-area-inset-bottom))" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}><strong style={{ color: theme.text }}>{label}</strong><button onClick={() => setOpen(false)} style={{ background: "none", border: "none", color: theme.textDim }}><X size={18}/></button></div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
+          <button onClick={() => adjust(-step)} style={{ padding: 10, border: `1px solid ${theme.border}`, background: theme.surfaceRaised, color: theme.text, borderRadius: 8, fontSize: 14, fontWeight: 800 }}>− {step}</button>
+          <button onClick={() => adjust(step)} style={{ padding: 10, border: `1px solid ${theme.border}`, background: theme.surfaceRaised, color: theme.text, borderRadius: 8, fontSize: 14, fontWeight: 800 }}>+ {step}</button>
+        </div>
+        <div style={{ height: 210, overflowY: "auto", scrollSnapType: "y mandatory", borderTop: `1px solid ${theme.border}`, borderBottom: `1px solid ${theme.border}` }}>
+          {values.map((n) => <button ref={selected === n ? selectedRef : null} key={n} onClick={() => { onChange(String(n)); setOpen(false); }} style={{ width: "100%", minHeight: 52, scrollSnapAlign: "center", background: selected === n ? tint(accent || theme.lift, .16) : "transparent", border: "none", borderBottom: `1px solid ${theme.border}`, color: selected === n ? (accent || theme.lift) : theme.text, fontSize: 24, fontWeight: selected === n ? 850 : 550, cursor: "pointer" }}>{n}{unit ? ` ${unit}` : ""}</button>)}
+        </div>
+        <div style={{ fontSize: 11, color: theme.textFaint, textAlign: "center", marginTop: 8 }}>{t("현재 값에서 빠르게 조정하거나 다이얼처럼 스크롤하세요.", "Use quick adjustments or scroll like a dial.")}</div>
+      </div>
+    </div>, document.body)}
+  </>;
 }
 
 // Guided, step-by-step lift session: one set at a time, with an automatic
@@ -3462,22 +4222,37 @@ function ExecutionHeader({ eyebrow, title, meta, onClose, accent }) {
 // as the manual editor, so the history/summary view doesn't need to know
 // which path was used to log it.
 function GuidedLiftSession({ program, onFinish, onCancel, initialDraft }) {
-  const { t } = useLang();
+  const { t, en } = useLang();
   const theme = useTheme();
 
   const restoringRef = useRef(!!initialDraft);
+  const guideSettingsLoadedRef = useRef(false);
   const [setupDone, setSetupDone] = useState(initialDraft?.setupDone ?? false);
   const [restSeconds, setRestSeconds] = useState(initialDraft?.restSeconds ?? 90);
   const [weightIncrement, setWeightIncrement] = useState(initialDraft?.weightIncrement ?? 2.5);
-  const [warmupSets, setWarmupSets] = useState(initialDraft?.warmupSets ?? 1);
+  const [targetOverrides, setTargetOverrides] = useState(initialDraft?.targetOverrides ?? {});
+  const [smoothRemainingMs, setSmoothRemainingMs] = useState(0);
+  const [restSound, setRestSound] = useState(initialDraft?.restSound ?? "classic");
+  useEffect(() => { if (!initialDraft?.restSound) loadKey("restTimerSound", "classic").then((v) => setRestSound(v || "classic")); }, []);
 
-  const [poMap, setPoMap] = useState(null); // { [key]: { weight, cycleStart } }
+  const [poMap, setPoMap] = useState(null); // { [key]: { weight, sessionsAtWeight, lastSessionDate, __guideSettings } }
   useEffect(() => {
+    let mounted = true;
     (async () => {
       const stored = await loadKey("progressiveOverload", {});
+      const guideMemory = initialDraft ? null : stored?.[GUIDE_SETTINGS_KEY]?.[guideSettingsKey(program)];
+      if (!mounted) return;
+      if (guideMemory) {
+        if (guideMemory.restSeconds != null) setRestSeconds(Number(guideMemory.restSeconds) || 0);
+        if (guideMemory.weightIncrement != null) setWeightIncrement(Number(guideMemory.weightIncrement) || 2.5);
+        if (guideMemory.restSound) setRestSound(guideMemory.restSound);
+        if (guideMemory.targetOverrides && typeof guideMemory.targetOverrides === "object") setTargetOverrides(guideMemory.targetOverrides);
+      }
+      guideSettingsLoadedRef.current = true;
       setPoMap(stored || {});
     })();
-  }, []);
+    return () => { mounted = false; };
+  }, [program.id, program.name, initialDraft]);
 
   // Flat plan: one entry per set across every exercise (warmup + working).
   const plan = useMemo(() => {
@@ -3485,20 +4260,23 @@ function GuidedLiftSession({ program, onFinish, onCancel, initialDraft }) {
     const items = [];
     (program.exercises || []).forEach((ex) => {
       const { startReps, maxReps } = parseRepRange(ex.repRange);
-      const key = poStateKey(program.id, ex.name);
+      const key = poStateKey(program.id, ex.id || ex.name);
       const poEntry = poMap[key];
       const targetReps = currentTargetReps(poEntry, startReps, maxReps);
       const workingWeight = poEntry?.weight ?? null;
       const workingCount = Math.max(1, Math.round(Number(ex.sets)) || 1);
-      for (let i = 0; i < warmupSets; i++) {
-        items.push({ exName: ex.name, muscle: ex.muscle, repRange: ex.repRange, isWarmup: true, targetReps: null, suggestedWeight: workingWeight != null ? Math.round((workingWeight * 0.6) / 2.5) * 2.5 : null });
+      const warmupCount = Math.max(0, Math.min(5, Number(ex.warmupSets ?? 1)));
+      const warmupRatios = warmupCount <= 1 ? [0.60] : warmupCount === 2 ? [0.50, 0.75] : warmupCount === 3 ? [0.40, 0.60, 0.80] : Array.from({ length: warmupCount }, (_, i) => 0.35 + (0.50 * i) / Math.max(1, warmupCount - 1));
+      for (let i = 0; i < warmupCount; i++) {
+        const ratio = warmupRatios[i] ?? 0.60;
+        items.push({ exerciseId: ex.id || ex.name, exName: ex.name, muscle: ex.muscle, repRange: ex.repRange, isWarmup: true, targetReps: null, suggestedWeight: workingWeight != null ? Math.max(0, Math.round((workingWeight * ratio) / 2.5) * 2.5) : null, warmupNumber: i + 1 });
       }
       for (let i = 0; i < workingCount; i++) {
-        items.push({ exName: ex.name, muscle: ex.muscle, repRange: ex.repRange, isWarmup: false, targetReps, suggestedWeight: workingWeight, isLastWorking: i === workingCount - 1, key, startReps, maxReps });
+        items.push({ exerciseId: ex.id || ex.name, exName: ex.name, muscle: ex.muscle, repRange: ex.repRange, isWarmup: false, targetReps, suggestedWeight: workingWeight, isLastWorking: i === workingCount - 1, key, startReps, maxReps });
       }
     });
     return items;
-  }, [poMap, program, warmupSets]);
+  }, [poMap, program]);
 
   const [stepIdx, setStepIdx] = useState(initialDraft?.stepIdx ?? 0);
   const [phase, setPhase] = useState(initialDraft?.phase ?? "logging"); // 'logging' | 'resting' | 'finished'
@@ -3510,88 +4288,155 @@ function GuidedLiftSession({ program, onFinish, onCancel, initialDraft }) {
     return initialDraft?.restRemaining ?? 0;
   });
   const [restEndsAt, setRestEndsAt] = useState(initialDraft?.restEndsAt || null);
+  useEffect(() => {
+    let listener;
+    const syncNativeTimer = async () => {
+      const state = await getNativeRestTimerState();
+      if (state?.skipped) {
+        setPhase("logging");
+        setRestEndsAt(null);
+        setRestRemaining(0);
+        setSmoothRemainingMs(0);
+        return;
+      }
+      if (state?.running && Number(state.endsAt) > Date.now()) {
+        const endsAtIso = new Date(Number(state.endsAt)).toISOString();
+        setRestEndsAt(endsAtIso);
+        setPhase("resting");
+      } else if (phase === "resting" && restEndsAt && new Date(restEndsAt).getTime() <= Date.now()) {
+        setPhase("logging");
+        setRestEndsAt(null);
+        setRestRemaining(0);
+        setSmoothRemainingMs(0);
+      }
+    };
+    CapApp.addListener("appStateChange", ({ isActive }) => { if (isActive) syncNativeTimer(); }).then((l) => { listener = l; }).catch(() => {});
+    syncNativeTimer();
+    return () => { if (listener?.remove) listener.remove(); };
+  }, [phase, restEndsAt]);
   const [notes, setNotes] = useState(initialDraft?.notes ?? "");
   const [startTime] = useState(() => initialDraft?.startTime || new Date().toISOString());
   const poUpdatesRef = useRef({});
+  const lastAdvancedStepRef = useRef(-1);
+  const lastEntryRef = useRef({}); // { [exerciseId]: { weight, reps } } — most recent working-set input, per exercise
 
   const current = plan[stepIdx];
+  const effectiveTargetReps = current?.isWarmup ? null : Number(targetOverrides[stepIdx] ?? current?.targetReps ?? 0);
   const exerciseNames = useMemo(() => [...new Set(plan.map((item) => item.exName))], [plan]);
   const currentExerciseNumber = current ? exerciseNames.indexOf(current.exName) + 1 : 0;
 
   useEffect(() => {
     if (restoringRef.current) { restoringRef.current = false; return; }
     if (current) {
-      setWeightInput(current.suggestedWeight != null ? String(current.suggestedWeight) : "");
-      setRepsInput("");
+      // Carry over the most recent working-set input for THIS exercise so
+      // multi-set exercises keep the chosen weight/reps. Uses a ref (updated
+      // synchronously in logCurrentSet) rather than `log`, which is stale in
+      // this stepIdx-only effect. Warmups and the first set of an exercise
+      // fall back to the prescribed suggestion (weight) / target (reps).
+      const carried = current.isWarmup ? null : lastEntryRef.current[current.exerciseId];
+      const tReps = current.isWarmup ? 0 : Number(targetOverrides[stepIdx] ?? current.targetReps ?? 0);
+      const cw = carried && carried.weight != null && carried.weight !== "" ? String(carried.weight) : null;
+      const cr = carried && carried.reps != null && carried.reps !== "" ? String(carried.reps) : null;
+      setWeightInput(cw != null ? cw : (current.suggestedWeight != null ? String(current.suggestedWeight) : ""));
+      setRepsInput(cr != null ? cr : (tReps ? String(tReps) : ""));
     }
-  }, [stepIdx]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [stepIdx, current?.suggestedWeight, current?.targetReps]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!setupDone || phase === "finished") return;
     saveKey("guidedSessionDraft", {
       date: todayStr(), programId: program.id, programName: program.name,
-      setupDone, restSeconds, weightIncrement, warmupSets,
-      stepIdx, phase, weightInput, repsInput, log, restRemaining, restEndsAt, notes, startTime,
+      setupDone, restSeconds, weightIncrement, targetOverrides, restSound,
+      stepIdx, phase, weightInput, repsInput, log, restEndsAt, notes, startTime,
     });
-  }, [setupDone, restSeconds, weightIncrement, warmupSets, stepIdx, phase, weightInput, repsInput, log, restRemaining, restEndsAt, notes, startTime, program.id, program.name]);
+  }, [setupDone, restSeconds, weightIncrement, targetOverrides, restSound, stepIdx, phase, weightInput, repsInput, log, restEndsAt, notes, startTime, program.id, program.name]);
 
-  // Date-backed rest timer: survives app backgrounding better than decrementing state blindly.
+  useEffect(() => {
+    if (!guideSettingsLoadedRef.current || initialDraft) return;
+    saveGuideSettings(program, { restSeconds, weightIncrement, restSound, targetOverrides });
+  }, [program, restSeconds, weightIncrement, restSound, targetOverrides, initialDraft]);
+
+  const startWorkoutWithMemory = async () => {
+    await saveGuideSettings(program, { restSeconds, weightIncrement, restSound, targetOverrides });
+    setSetupDone(true);
+  };
+
+  // Date-backed timer with a requestAnimationFrame visual layer. The number updates
+  // once per second, while the ring reads millisecond progress for smooth motion.
   useEffect(() => {
     if (phase !== "resting") return;
-    const tick = () => {
-      const remaining = restEndsAt ? Math.max(0, Math.ceil((new Date(restEndsAt) - new Date()) / 1000)) : restRemaining;
-      setRestRemaining(remaining);
-      if (remaining <= 0) {
-        haptic();
-        advance();
-      }
+    let raf = 0, fired = false, lastShown = null;
+    const frame = () => {
+      const ms = restEndsAt ? Math.max(0, new Date(restEndsAt).getTime() - Date.now()) : 0;
+      setSmoothRemainingMs(ms);
+      const shown = Math.ceil(ms / 1000);
+      if (shown !== lastShown) { lastShown = shown; setRestRemaining(shown); }
+      if (ms <= 0 && !fired) { fired = true; playRestFinishSound(restSound); advance(); return; }
+      raf = requestAnimationFrame(frame);
     };
-    tick();
-    const timer = setInterval(tick, 1000);
-    document.addEventListener("visibilitychange", tick);
-    return () => { clearInterval(timer); document.removeEventListener("visibilitychange", tick); };
+    raf = requestAnimationFrame(frame);
+    return () => cancelAnimationFrame(raf);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase, restEndsAt]);
 
   const logCurrentSet = () => {
     if (!weightInput || !repsInput || !current) return;
+    getAudioCtx(); // unlock audio on this user gesture so the rest-finish sound can play
+    // Guard against impossible values slipping into the log / PO math.
+    const w = Number(weightInput), r = Number(repsInput);
+    if (!Number.isFinite(w) || w < 0 || w > 1000) return;
+    if (!Number.isFinite(r) || r < 1 || r > 100) return;
     setLog((prev) => {
       const next = [...prev];
-      let group = next.find((g) => g.name === current.exName);
+      let group = next.find((g) => (g.id || g.exerciseId) === current.exerciseId) || next.find((g) => !g.id && g.name === current.exName);
       if (!group) {
-        group = { name: current.exName, repRange: current.repRange, muscle: current.muscle, sets: [] };
+        group = { id: current.exerciseId, name: current.exName, repRange: current.repRange, muscle: current.muscle, sets: [] };
         next.push(group);
       }
-      group.sets = [...group.sets, { weight: weightInput, reps: repsInput }];
+      group.sets = [...group.sets, { weight: weightInput, reps: repsInput, setType: current.isWarmup ? "warmup" : "working", targetReps: current.isWarmup ? null : effectiveTargetReps }];
       return next;
     });
-    // Progressive overload: only the last working set of an exercise
-    // decides whether this exercise's weight should bump next time.
+    if (!current.isWarmup) lastEntryRef.current[current.exerciseId] = { weight: weightInput, reps: repsInput };
+    // Progressive overload (session-based): the last working set of an
+    // exercise decides how this exercise progresses next session.
+    //   - If reps hit the top of the range at the rep cap → bump weight,
+    //     reset the session counter (target reps start over at the bottom).
+    //   - Otherwise → keep the same weight and advance the session counter
+    //     by 1, so next session's target is one rep higher (capped at max).
     if (!current.isWarmup && current.isLastWorking) {
-      const achieved = Number(repsInput) >= current.targetReps && current.targetReps >= current.maxReps;
+      const prev = poMap[current.key] || {};
+      const prevWeight = prev.weight ?? (Number(weightInput) || 0);
+      const hitTarget = Number(repsInput) >= effectiveTargetReps;
+      const achieved = hitTarget && effectiveTargetReps >= current.maxReps;
       if (achieved) {
-        const newWeight = (Number(weightInput) || 0) + weightIncrement;
-        poUpdatesRef.current[current.key] = { weight: newWeight, cycleStart: todayStr() };
-      } else if (!poMap[current.key]) {
-        // First time doing this exercise in guided mode — seed the PO
-        // state from whatever weight was actually used, so next time has
-        // a starting point even without a bump yet.
-        poUpdatesRef.current[current.key] = { weight: Number(weightInput) || 0, cycleStart: poMap[current.key]?.cycleStart || todayStr() };
+        poUpdatesRef.current[current.key] = {
+          weight: (Number(weightInput) || 0) + weightIncrement,
+          sessionsAtWeight: 0,
+          lastSessionDate: todayStr(),
+        };
+      } else {
+        poUpdatesRef.current[current.key] = {
+          weight: prev.weight != null ? prevWeight : (Number(weightInput) || 0),
+          sessionsAtWeight: hitTarget ? Math.max(0, prev.sessionsAtWeight ?? 0) + 1 : Math.max(0, prev.sessionsAtWeight ?? 0),
+          lastSessionDate: todayStr(),
+        };
       }
     }
-    if (current.isWarmup || restSeconds <= 0) {
+    if (current.isWarmup || restSeconds <= 0 || stepIdx + 1 >= plan.length) {
       advance();
     } else {
       const endsAt = new Date(Date.now() + restSeconds * 1000).toISOString();
       setPhase("resting");
       setRestRemaining(restSeconds);
       setRestEndsAt(endsAt);
-      scheduleRestTimerNotification(restSeconds, t("휴식 끝!", "Rest's over!"), t("다음 세트 시작할 시간이에요.", "Time for the next set."));
+      startNativeRestTimer(restSeconds, restSound);
     }
   };
 
   const advance = () => {
-    cancelRestTimerNotification();
+    if (lastAdvancedStepRef.current === stepIdx) return; // guard: only advance once per step (timer + skip can both fire)
+    lastAdvancedStepRef.current = stepIdx;
+    stopNativeRestTimer();
     if (stepIdx + 1 >= plan.length) {
       finishSession();
     } else {
@@ -3600,7 +4445,7 @@ function GuidedLiftSession({ program, onFinish, onCancel, initialDraft }) {
       setPhase("logging");
     }
   };
-  const skipRest = () => { setRestEndsAt(new Date().toISOString()); setRestRemaining(0); };
+  const skipRest = () => { setRestRemaining(0); setSmoothRemainingMs(0); advance(); };
 
   const finishSession = async () => {
     // Persist progressive-overload updates gathered along the way.
@@ -3615,7 +4460,7 @@ function GuidedLiftSession({ program, onFinish, onCancel, initialDraft }) {
   const saveAndClose = () => {
     deleteKey("guidedSessionDraft");
     onFinish({
-      date: todayStr(), type: "lift", subtype: program.name,
+      date: todayStr(), type: "lift", subtype: program.name, programId: program.id,
       startTime, endTime: new Date().toISOString(),
       duration: "", distance: "", hr: "", notes,
       exercises: log,
@@ -3633,7 +4478,7 @@ function GuidedLiftSession({ program, onFinish, onCancel, initialDraft }) {
               {[0, 30, 60, 90, 120, 180, 300, 600].map((s) => (
                 <button key={s} onClick={() => setRestSeconds(s)}
                   style={{
-                    padding: "7px 10px", borderRadius: 12, fontSize: 12, cursor: "pointer",
+                    padding: "7px 10px", borderRadius: 2, fontSize: 12, cursor: "pointer",
                     border: `1px solid ${restSeconds === s ? theme.lift : theme.border}`,
                     background: restSeconds === s ? tint(theme.lift, 0.16) : "transparent", color: theme.text,
                   }}>
@@ -3648,7 +4493,7 @@ function GuidedLiftSession({ program, onFinish, onCancel, initialDraft }) {
               {[1, 2.5, 5].map((w) => (
                 <button key={w} onClick={() => setWeightIncrement(w)}
                   style={{
-                    flex: 1, padding: "9px 4px", borderRadius: 12, fontSize: 12, cursor: "pointer",
+                    flex: 1, padding: "9px 4px", borderRadius: 2, fontSize: 12, cursor: "pointer",
                     border: `1px solid ${weightIncrement === w ? theme.lift : theme.border}`,
                     background: weightIncrement === w ? tint(theme.lift, 0.16) : "transparent", color: theme.text,
                   }}>
@@ -3669,36 +4514,51 @@ function GuidedLiftSession({ program, onFinish, onCancel, initialDraft }) {
             </div>
           </div>
           <div>
-            <div style={{ fontSize: 12, color: theme.textFaint, marginBottom: 8 }}>{t("웜업 세트 수 (운동마다)", "Warmup sets (per exercise)")}</div>
-            <div style={{ display: "flex", gap: 5 }}>
-              {[0, 1, 2, 3].map((n) => (
-                <button key={n} onClick={() => setWarmupSets(n)}
-                  style={{
-                    flex: 1, padding: "9px 4px", borderRadius: 12, fontSize: 12, cursor: "pointer",
-                    border: `1px solid ${warmupSets === n ? theme.lift : theme.border}`,
-                    background: warmupSets === n ? tint(theme.lift, 0.16) : "transparent", color: theme.text,
-                  }}>
-                  {n}
-                </button>
-              ))}
+            <div style={{ fontSize: 12, color: theme.textFaint, marginBottom: 8 }}>{t("운동별 웜업 세트", "Warmup sets by exercise")}</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {(program.exercises || []).map((ex) => <div key={ex.id || ex.name} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: `1px solid ${theme.border}`, padding: "8px 0" }}>
+                <span style={{ fontSize: 12.5, color: theme.text }}>{ex.name}</span>
+                <span style={{ fontSize: 12, color: theme.lift, fontWeight: 800 }}>{Number(ex.warmupSets ?? 1)} {t("세트", "sets")}</span>
+              </div>)}
+            </div>
+            <div style={{ fontSize: 11, color: theme.textFaint, marginTop: 6 }}>{t("Plan의 프로그램 편집에서 운동마다 변경할 수 있어요.", "Change each exercise in the Plan program editor.")}</div>
+          </div>
+          <div>
+            <div style={{ fontSize: 12, color: theme.textFaint, marginBottom: 8 }}>{t("휴식 종료 알람", "Rest alarm sound")}</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 6 }}>
+              {[["classic",t("클래식 벨","Classic Bell")],["digital",t("디지털","Digital Beep")],["buzzer",t("짐 버저","Gym Buzzer")],["vibrate",t("진동만","Vibration only")]].map(([id,label]) => <button key={id} onClick={() => { setRestSound(id); saveKey("restTimerSound", id); }} style={{ padding: 9, borderRadius: 4, border: `1px solid ${restSound===id?theme.lift:theme.border}`, background: restSound===id?tint(theme.lift,.14):"transparent", color: theme.text, fontSize: 12 }}>{label}</button>)}
             </div>
           </div>
         </div>
         <div style={{ flex: 1 }} />
-        <PrimaryButton onClick={() => setSetupDone(true)}>{t("운동 시작", "Start Workout")}</PrimaryButton>
+        <PrimaryButton onClick={startWorkoutWithMemory}>{t("운동 시작", "Start Workout")}</PrimaryButton>
       </FullscreenPortal>
     );
   }
 
   if (phase === "finished") {
+    const totalSets = log.reduce((s, g) => s + g.sets.length, 0);
+    const totalVol = Math.round(log.reduce((s, g) => s + g.sets.reduce((ss, st) => ss + (Number(st.weight) || 0) * (Number(st.reps) || 0), 0), 0));
+    const totalExercises = log.length;
+    const StatCell = ({ label, value }) => (
+      <div style={{ flex: 1, textAlign: "center", padding: "12px 6px", border: `1px solid ${theme.border}`, borderRadius: 2, background: theme.surface }}>
+        <div style={{ fontSize: 22, fontWeight: 850, color: theme.lift, fontVariantNumeric: "tabular-nums", lineHeight: 1 }}>{value}</div>
+        <div style={{ fontSize: 9.5, fontFamily: MONO_FONT_STACK, letterSpacing: "0.1em", textTransform: "uppercase", color: theme.textFaint, marginTop: 5 }}>{label}</div>
+      </div>
+    );
     return (
       <FullscreenPortal accent={theme.lift}>
-        <ExecutionHeader eyebrow={t("세션 완료", "Session complete")} title={t("수고하셨어요!", "Great work!")} meta={`${program.name} · ${log.reduce((s, g) => s + g.sets.length, 0)} ${t("세트 완료", "sets logged")}`} accent={theme.lift} />
+        <ExecutionHeader eyebrow={t("세션 완료", "Session complete")} title={t("수고하셨어요!", "Great work!")} meta={`${program.name}`} accent={theme.lift} />
+        <div style={{ display: "flex", gap: 8, marginBottom: 14, animation: "hlViewIn 0.34s cubic-bezier(0.22, 1, 0.36, 1) both" }}>
+          <StatCell label={t("운동", "Exercises")} value={totalExercises} />
+          <StatCell label={t("세트", "Sets")} value={totalSets} />
+          <StatCell label={t("총 볼륨", "Volume")} value={`${totalVol.toLocaleString()}`} />
+        </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16, overflowY: "auto", flex: 1 }}>
-          {log.map((g) => (
-            <Card key={g.name} style={{ padding: 10 }}>
+          {log.map((g, i) => (
+            <Card key={g.name} style={{ padding: 10, ...staggerStyle(i + 1) }}>
               <div style={{ fontSize: 13, fontWeight: 700, color: theme.text, marginBottom: 4 }}>{g.name}</div>
-              <div style={{ fontSize: 12, color: theme.textDim }}>{g.sets.map((s) => `${s.weight}×${s.reps}`).join(", ")}</div>
+              <div style={{ fontSize: 12, color: theme.textDim }}>{g.sets.map((s) => `${s.setType === "warmup" ? "W" : "S"} ${s.weight}×${s.reps}`).join(", ")}</div>
             </Card>
           ))}
         </div>
@@ -3710,51 +4570,91 @@ function GuidedLiftSession({ program, onFinish, onCancel, initialDraft }) {
     );
   }
 
-  if (!current) return null;
+  // poMap loads asynchronously; until it (and therefore the plan) is ready,
+  // show a brief loading state instead of a blank flash.
+  if (!current) {
+    return (
+      <FullscreenPortal accent={theme.lift}>
+        <ExecutionHeader eyebrow={t("가이드 세션", "Guided session")} title={program.name} meta={t("준비 중", "Preparing")} onClose={onCancel} accent={theme.lift} />
+        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: theme.textFaint, fontSize: 13 }}>
+          {t("세션 불러오는 중…", "Loading session…")}
+        </div>
+      </FullscreenPortal>
+    );
+  }
 
   return (
     <FullscreenPortal accent={theme.lift}>
       <ExecutionHeader
         eyebrow={t(`운동 ${currentExerciseNumber}/${exerciseNames.length}`, `Exercise ${currentExerciseNumber}/${exerciseNames.length}`)}
         title={current.exName}
-        meta={t(`세트 ${stepIdx + 1}/${plan.length} · ${current.isWarmup ? "웜업" : `목표 ${current.targetReps}회`}`, `Set ${stepIdx + 1}/${plan.length} · ${current.isWarmup ? "Warmup" : `Target ${current.targetReps} reps`}`)}
+        meta={t(`세트 ${stepIdx + 1}/${plan.length} · ${current.isWarmup ? "웜업" : `목표 ${effectiveTargetReps}회`}`, `Set ${stepIdx + 1}/${plan.length} · ${current.isWarmup ? "Warmup" : `Target ${effectiveTargetReps} reps`}`)}
         onClose={onCancel}
         accent={theme.lift}
       />
 
-      <div style={{ position: "sticky", top: 0, zIndex: 2, background: theme.bg, borderBottom: `1px solid ${theme.border}`, padding: "8px 0", marginBottom: 8, display: "flex", justifyContent: "space-between", gap: 12, fontSize: 13, color: theme.textDim, fontVariantNumeric: "tabular-nums" }}>
-        <span>{t(`운동 ${currentExerciseNumber}/${exerciseNames.length}`, `Exercise ${currentExerciseNumber}/${exerciseNames.length}`)}</span>
-        <strong style={{ color: theme.text }}>{t(`세트 ${stepIdx + 1}/${plan.length}`, `Set ${stepIdx + 1}/${plan.length}`)}</strong>
+      <div style={{ position: "sticky", top: 0, zIndex: 2, background: theme.bg, borderBottom: `1px solid ${theme.border}`, padding: "10px 0", marginBottom: 8 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 10.5, color: theme.textDim, fontVariantNumeric: "tabular-nums", fontFamily: MONO_FONT_STACK, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 8 }}>
+          <span>{t(`운동 ${currentExerciseNumber}/${exerciseNames.length}`, `Exercise ${currentExerciseNumber}/${exerciseNames.length}`)}</span>
+          <strong style={{ color: theme.text, fontWeight: 700 }}>{t(`세트 ${stepIdx + 1}/${plan.length}`, `Set ${stepIdx + 1}/${plan.length}`)}</strong>
+        </div>
+        {/* tick-gauge: one segment per set, filled = done/current */}
+        <div style={{ display: "flex", gap: 3 }}>
+          {plan.map((s, i) => (
+            <div key={i} style={{
+              flex: 1, height: 4, borderRadius: 1,
+              background: i < stepIdx ? theme.lift : (i === stepIdx ? theme.lift : theme.surfaceRaised),
+              opacity: i === stepIdx ? 1 : (i < stepIdx ? 0.55 : 1),
+            }} />
+          ))}
+        </div>
       </div>
       {phase === "logging" ? (
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", gap: 22 }}>
-          <div style={{ textAlign: "left", borderLeft: `3px solid ${theme.lift}`, paddingLeft: 12 }}>
-            <div style={{ fontSize: 12, fontWeight: 800, color: theme.textFaint, letterSpacing: "0.08em" }}>{current.isWarmup ? t("웜업 세트", "WARMUP SET") : t("현재 세트", "CURRENT SET")}</div>
-            <div style={{ fontSize: 14, color: theme.textDim, marginTop: 4 }}>{current.isWarmup ? t("움직임과 자세를 확인하세요", "Check movement and form") : t(`목표 ${current.targetReps}회 · ${current.repRange}`, `Target ${current.targetReps} reps · ${current.repRange}`)}</div>
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", gap: 26 }}>
+          <div style={{ textAlign: "left", borderLeft: `2px solid ${theme.lift}`, paddingLeft: 14 }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: theme.lift, letterSpacing: "0.16em", textTransform: "uppercase", fontFamily: MONO_FONT_STACK }}>{current.isWarmup ? t("웜업 세트", "WARMUP SET") : t("현재 세트", "CURRENT SET")}</div>
+            <div style={{ fontSize: 13.5, color: theme.textDim, marginTop: 6, fontFamily: MONO_FONT_STACK, letterSpacing: "0.04em" }}>{current.isWarmup ? t("움직임과 자세를 확인", "CHECK MOVEMENT & FORM") : t(`목표 ${effectiveTargetReps}회 · ${current.repRange}`, `TARGET ${effectiveTargetReps} · ${current.repRange}`)}</div>
           </div>
-          {(() => { const prior = log.find((g) => g.name === current.exName)?.sets?.at(-1); return prior ? <StatusCallout tone="lift" style={{ fontSize: 13 }}>{t("방금 기록", "Last set")} · <strong>{prior.weight} kg × {prior.reps}</strong></StatusCallout> : null; })()}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-            <div style={{ textAlign: "center" }}>
-              <div style={{ fontSize: 12, color: theme.textFaint, marginBottom: 4 }}>{t("무게(kg)", "Weight (kg)")}</div>
-              <TextInput type="number" step="0.5" value={weightInput} onChange={(e) => setWeightInput(e.target.value)}
-                style={{ width: "100%", minHeight: 66, fontSize: 24, textAlign: "center", fontWeight: 800, fontVariantNumeric: "tabular-nums" }} />
+          {(() => { const prior = log.find((g) => g.name === current.exName)?.sets?.at(-1); return prior ? (
+            <div style={{ display: "flex", alignItems: "baseline", gap: 8, background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 8, padding: "10px 14px" }}>
+              <span style={{ fontSize: 10, color: theme.textFaint, fontFamily: MONO_FONT_STACK, letterSpacing: "0.12em", textTransform: "uppercase" }}>{t("직전", "Last")}</span>
+              <span style={{ fontSize: 18, fontWeight: 800, color: theme.text, fontVariantNumeric: "tabular-nums" }}>{prior.weight}<span style={{ fontSize: 11, color: theme.textDim }}>kg</span> × {prior.reps}</span>
             </div>
-            <div style={{ textAlign: "center" }}>
-              <div style={{ fontSize: 12, color: theme.textFaint, marginBottom: 4 }}>{t("횟수", "Reps")}</div>
-              <TextInput type="number" value={repsInput} onChange={(e) => setRepsInput(e.target.value)}
-                style={{ width: "100%", minHeight: 66, fontSize: 24, textAlign: "center", fontWeight: 800, fontVariantNumeric: "tabular-nums" }} />
-            </div>
+          ) : null; })()}
+          {!current.isWarmup && <NumericWheelButton label={t("오늘 목표 반복수", "Today's target reps")} value={String(effectiveTargetReps)} onChange={(v) => setTargetOverrides((prev) => ({ ...prev, [stepIdx]: Number(v) }))} min={current.startReps} max={current.maxReps} step={1} unit={t("회", " reps")} accent={theme.lift} />}
+          <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+            <InlineWheel label={t("무게", "Weight")} value={weightInput} onChange={setWeightInput} min={0} max={300} step={0.5} unit="kg" accent={theme.lift} />
+            <InlineWheel label={t("실제 횟수", "Actual reps")} value={repsInput} onChange={setRepsInput} min={1} max={50} step={1} unit={t("회", "")} accent={theme.lift} />
           </div>
-          <PrimaryButton onClick={logCurrentSet} disabled={!weightInput || !repsInput} style={{ minHeight: 68, fontSize: 17, marginTop: "auto" }}>{t("세트 완료", "Complete Set")}</PrimaryButton>
+          <div style={{ height: 1, background: theme.border }} />
+          <PrimaryButton onClick={logCurrentSet} disabled={!weightInput || !repsInput} style={{ minHeight: 64, fontSize: 13, marginTop: "auto", letterSpacing: "0.14em", textTransform: "uppercase", fontFamily: MONO_FONT_STACK, fontWeight: 700, borderRadius: 8 }}>{t("세트 기록", "Log Set")}</PrimaryButton>
         </div>
       ) : (
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 20 }}>
-          <div style={{ fontSize: 12, fontWeight: 800, color: theme.textFaint, letterSpacing: "0.1em" }}>{t("휴식 타이머", "REST TIMER")}</div>
-          <div style={{ fontSize: 64, fontWeight: 850, color: theme.lift, fontVariantNumeric: "tabular-nums", lineHeight: 0.95 }}>
-            {Math.floor(restRemaining / 60)}:{String(restRemaining % 60).padStart(2, "0")}
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 26 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: theme.textFaint, letterSpacing: "0.2em", fontFamily: MONO_FONT_STACK, textTransform: "uppercase" }}>{t("휴식 타이머", "Rest Timer")}</div>
+          {(() => {
+            const total = Math.max(1, restSeconds);
+            const frac = Math.max(0, Math.min(1, smoothRemainingMs / (total * 1000)));
+            const size = 200, stroke = 5, r = (size - stroke) / 2, circ = 2 * Math.PI * r;
+            return (
+              <div style={{ position: "relative", width: size, height: size, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <svg width={size} height={size} style={{ position: "absolute", top: 0, left: 0, transform: "rotate(-90deg)" }}>
+                  <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={theme.surfaceRaised} strokeWidth={stroke} />
+                  <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={theme.lift} strokeWidth={stroke} strokeLinecap="round"
+                    strokeDasharray={circ} strokeDashoffset={circ * (1 - frac)} style={{ transition: "none" }} />
+                </svg>
+                <div style={{ fontSize: 60, fontWeight: 800, color: theme.text, fontVariantNumeric: "tabular-nums", lineHeight: 0.95, letterSpacing: "-0.02em" }}>
+                  {Math.floor(restRemaining / 60)}:{String(restRemaining % 60).padStart(2, "0")}
+                </div>
+              </div>
+            );
+          })()}
+          <div style={{ width: "100%", borderLeft: `2px solid ${theme.lift}`, padding: "10px 14px" }}>
+            <div style={{ fontSize: 10, color: theme.textFaint, fontFamily: MONO_FONT_STACK, letterSpacing: "0.14em", textTransform: "uppercase", marginBottom: 5 }}>{t("다음", "Next Up")}</div>
+            <div style={{ fontSize: 18, fontWeight: 600, fontStyle: "italic", fontFamily: SERIF_FONT_STACK, color: theme.text }}>{plan[stepIdx + 1]?.exName || t("완료", "Finish")}</div>
+            {plan[stepIdx + 1] && !plan[stepIdx + 1].isWarmup && <div style={{ fontSize: 11, color: theme.textDim, fontFamily: MONO_FONT_STACK, letterSpacing: "0.06em", marginTop: 4 }}>{t(`목표 ${plan[stepIdx + 1].targetReps}회`, `Target ${plan[stepIdx + 1].targetReps} reps`)}</div>}
           </div>
-          <div style={{ width: "100%", borderLeft: `3px solid ${theme.lift}`, padding: "8px 12px", background: tint(theme.lift, 0.06), fontSize: 13, color: theme.textDim }}>{t("다음 세트:", "NEXT SET:")} <strong style={{ color: theme.text }}>{plan[stepIdx + 1]?.exName || t("완료", "Finish")}</strong></div>
-          <button onClick={skipRest} style={{ background: "none", border: `1px solid ${theme.border}`, borderRadius: 12, padding: "9px 16px", color: theme.textDim, cursor: "pointer", fontSize: 13 }}>
+          <button onClick={skipRest} style={{ background: "none", border: `1px solid ${theme.border}`, borderRadius: 8, padding: "10px 18px", color: theme.textDim, cursor: "pointer", fontSize: 11, fontFamily: MONO_FONT_STACK, letterSpacing: "0.12em", textTransform: "uppercase" }}>
             {t("건너뛰기", "Skip Rest")}
           </button>
         </div>
@@ -3764,7 +4664,7 @@ function GuidedLiftSession({ program, onFinish, onCancel, initialDraft }) {
 }
 
 function ExerciseSetEditor({ exercises, setExercises, workouts, programName }) {
-  const { t } = useLang();
+  const { t, en } = useLang();
   const theme = useTheme();
 
   const lastSession = useMemo(() => {
@@ -3775,7 +4675,12 @@ function ExerciseSetEditor({ exercises, setExercises, workouts, programName }) {
     return matches[0] || null;
   }, [workouts, programName]);
 
-  const lastExerciseFor = (exName) => lastSession?.exercises.find((e) => e.name === exName) || null;
+  const lastExerciseFor = (exercise) => {
+    if (!exercise) return null;
+    return lastSession?.exercises.find((e) => (e.id || e.exerciseId) && (e.id || e.exerciseId) === (exercise.id || exercise.exerciseId))
+      || lastSession?.exercises.find((e) => e.name === exercise.name)
+      || null;
+  };
 
   const updateSet = (exIdx, setIdx, field, value) => {
     const next = exercises.map((ex, i) => {
@@ -3785,7 +4690,7 @@ function ExerciseSetEditor({ exercises, setExercises, workouts, programName }) {
     setExercises(next);
   };
   const addSet = (exIdx) => {
-    const next = exercises.map((ex, i) => (i === exIdx ? { ...ex, sets: [...ex.sets, { weight: "", reps: "" }] } : ex));
+    const next = exercises.map((ex, i) => (i === exIdx ? { ...ex, sets: [...ex.sets, { weight: "", reps: "", setType: "working" }] } : ex));
     setExercises(next);
   };
   const removeSet = (exIdx, setIdx) => {
@@ -3795,16 +4700,16 @@ function ExerciseSetEditor({ exercises, setExercises, workouts, programName }) {
   // Loads the entire last session's numbers for this exercise at once —
   // same explicit, tappable pattern as the nutrition tab's "yesterday" chips,
   // instead of a second, different (ghost-placeholder) repeat-entry idiom.
-  const loadLastSession = (exIdx, exName) => {
-    const lastEx = lastExerciseFor(exName);
+  const loadLastSession = (exIdx, exercise) => {
+    const lastEx = lastExerciseFor(exercise);
     if (!lastEx) return;
     const next = exercises.map((ex, i) => {
       if (i !== exIdx) return ex;
       const newSets = ex.sets.map((s, j) => {
         const last = lastEx.sets[j];
-        return last ? { weight: last.weight ? String(last.weight) : "", reps: last.reps ? String(last.reps) : "" } : s;
+        return last ? { weight: last.weight ? String(last.weight) : "", reps: last.reps ? String(last.reps) : "", setType: last.setType || "working", targetReps: last.targetReps ?? null } : s;
       });
-      return { ...ex, sets: newSets };
+      return { ...ex, id: ex.id || ex.exerciseId || uid(), sets: newSets };
     });
     setExercises(next);
   };
@@ -3812,7 +4717,7 @@ function ExerciseSetEditor({ exercises, setExercises, workouts, programName }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       {exercises.map((ex, exIdx) => {
-        const lastEx = lastExerciseFor(ex.name);
+        const lastEx = lastExerciseFor(ex);
         return (
         <Card key={ex.name} style={{ background: theme.surfaceRaised, padding: 10 }}>
           <div style={{ display: "flex", justifyContent: "space-between", marginBottom: lastEx ? 2 : 8 }}>
@@ -3820,10 +4725,10 @@ function ExerciseSetEditor({ exercises, setExercises, workouts, programName }) {
             <div style={{ fontSize: 12, color: theme.textFaint }}>{t("목표 반복", "Target reps")} {ex.repRange}</div>
           </div>
           {lastEx && (
-            <button onClick={() => loadLastSession(exIdx, ex.name)}
+            <button onClick={() => loadLastSession(exIdx, ex)}
               style={{
                 display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%",
-                background: "none", border: `1px dashed ${theme.lift}`, borderRadius: 12, cursor: "pointer",
+                background: "none", border: `1px dashed ${theme.lift}`, borderRadius: 2, cursor: "pointer",
                 padding: "6px 9px", marginBottom: 8, textAlign: "left",
               }}>
               <span style={{ fontSize: 12, color: theme.lift }}>
@@ -3834,14 +4739,14 @@ function ExerciseSetEditor({ exercises, setExercises, workouts, programName }) {
             </button>
           )}
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            {ex.sets.map((s, setIdx) => (
+            {ex.sets.map((s, setIdx) => {
+              const workingNumber = ex.sets.slice(0, setIdx + 1).filter((item) => item.setType !== "warmup").length;
+              return (
               <div key={setIdx} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ fontSize: 12, color: theme.textFaint, width: 34, flexShrink: 0 }}>{t("세트", "Set")}{setIdx + 1}</span>
-                <TextInput type="number" placeholder="kg" value={s.weight}
-                  onChange={(e) => updateSet(exIdx, setIdx, "weight", e.target.value)} />
+                <button type="button" onClick={() => updateSet(exIdx, setIdx, "setType", s.setType === "warmup" ? "working" : "warmup")} style={{ fontSize: 10, color: s.setType === "warmup" ? theme.run : theme.lift, width: 46, flexShrink: 0, border: `1px solid ${s.setType === "warmup" ? theme.run : theme.lift}`, background: "transparent", padding: "5px 2px", cursor: "pointer" }}>{s.setType === "warmup" ? "WARM" : `SET ${workingNumber}`}</button>
+                <div style={{ flex: 1 }}><NumericWheelButton compact label={t("무게", "Weight")} value={s.weight} onChange={(v) => updateSet(exIdx, setIdx, "weight", v)} min={0} max={300} step={0.5} unit="kg" accent={theme.lift} /></div>
                 <span style={{ fontSize: 12, color: theme.textFaint }}>×</span>
-                <TextInput type="number" placeholder="reps" value={s.reps}
-                  onChange={(e) => updateSet(exIdx, setIdx, "reps", e.target.value)} />
+                <div style={{ flex: 1 }}><NumericWheelButton compact label={t("횟수", "Reps")} value={s.reps} onChange={(v) => updateSet(exIdx, setIdx, "reps", v)} min={1} max={50} step={1} unit={t("회", " reps")} accent={theme.lift} /></div>
                 <button onClick={() => removeSet(exIdx, setIdx)} disabled={ex.sets.length <= 1}
                   style={{
                     background: "none", border: "none", flexShrink: 0, padding: 4,
@@ -3851,11 +4756,12 @@ function ExerciseSetEditor({ exercises, setExercises, workouts, programName }) {
                   <X size={14} />
                 </button>
               </div>
-            ))}
+              );
+            })}
           </div>
           <button onClick={() => addSet(exIdx)}
             style={{
-              marginTop: 8, background: "none", border: `1px dashed ${theme.border}`, borderRadius: 12,
+              marginTop: 8, background: "none", border: `1px dashed ${theme.border}`, borderRadius: 2,
               padding: "6px 10px", color: theme.textDim, fontSize: 12, cursor: "pointer",
               display: "flex", alignItems: "center", justifyContent: "center", gap: 4, width: "100%",
             }}>
@@ -3932,10 +4838,10 @@ function computeMuscleVolume(workouts, days) {
   cutoff.setDate(cutoff.getDate() - days);
   const volume = {};
   workouts.forEach((w) => {
-    if (w.type !== "lift" || !w.exercises || new Date(w.date) < cutoff) return;
+    if (w.type !== "lift" || !w.exercises || parseLocalDate(w.date) < cutoff) return;
     w.exercises.forEach((ex) => {
       if (!ex.muscle || !ex.sets) return;
-      volume[ex.muscle] = (volume[ex.muscle] || 0) + ex.sets.length;
+      volume[ex.muscle] = (volume[ex.muscle] || 0) + ex.sets.filter((set) => set.setType !== "warmup").length;
     });
   });
   return volume;
@@ -3945,46 +4851,33 @@ function BodyMuscleDiagram({ volume, view, theme }) {
   const max = Math.max(1, ...Object.values(volume));
   const colorFor = (muscle) => {
     const v = volume[muscle] || 0;
-    if (v === 0) return theme.surfaceRaised;
-    return mixHex(theme.surfaceRaised, theme.lift, 0.25 + Math.min(1, v / max) * 0.75);
+    return v === 0 ? theme.surfaceRaised : mixHex(theme.surfaceRaised, theme.lift, 0.28 + Math.min(1, v / max) * 0.72);
   };
-  // Simplified anatomical silhouette — approximate regions, not a medical
-  // illustration, just enough to read "which areas got trained."
-  return (
-    <svg width="100%" height="220" viewBox="0 0 130 220">
-      {/* head */}
-      <circle cx="65" cy="18" r="14" fill={theme.border} />
-      {view === "front" ? (
-        <>
-          <ellipse cx="38" cy="40" rx="10" ry="11" fill={colorFor("shoulders")} />
-          <ellipse cx="92" cy="40" rx="10" ry="11" fill={colorFor("shoulders")} />
-          <rect x="46" y="34" width="38" height="42" rx="10" fill={colorFor("chest")} />
-          <rect x="50" y="76" width="30" height="34" rx="8" fill={colorFor("core")} />
-          <rect x="28" y="44" width="14" height="50" rx="7" fill={colorFor("biceps")} />
-          <rect x="88" y="44" width="14" height="50" rx="7" fill={colorFor("biceps")} />
-          <rect x="42" y="112" width="20" height="58" rx="9" fill={colorFor("quads")} />
-          <rect x="68" y="112" width="20" height="58" rx="9" fill={colorFor("quads")} />
-        </>
-      ) : (
-        <>
-          <ellipse cx="38" cy="40" rx="10" ry="11" fill={colorFor("shoulders")} />
-          <ellipse cx="92" cy="40" rx="10" ry="11" fill={colorFor("shoulders")} />
-          <rect x="44" y="32" width="42" height="48" rx="10" fill={colorFor("back")} />
-          <rect x="28" y="46" width="14" height="46" rx="7" fill={colorFor("triceps")} />
-          <rect x="88" y="46" width="14" height="46" rx="7" fill={colorFor("triceps")} />
-          <rect x="46" y="112" width="38" height="24" rx="8" fill={colorFor("glutes")} />
-          <rect x="42" y="138" width="20" height="34" rx="9" fill={colorFor("hamstrings")} />
-          <rect x="68" y="138" width="20" height="34" rx="9" fill={colorFor("hamstrings")} />
-          <rect x="44" y="174" width="18" height="34" rx="8" fill={colorFor("calves")} />
-          <rect x="68" y="174" width="18" height="34" rx="8" fill={colorFor("calves")} />
-        </>
-      )}
-    </svg>
-  );
+  const stroke = theme.border;
+  return <svg width="100%" height="240" viewBox="0 0 150 240" aria-label="anatomical muscle map">
+    <g fill="none" stroke={stroke} strokeWidth="2" strokeLinejoin="round">
+      <path d="M75 8c-11 0-18 8-18 19 0 9 5 17 12 20v9c-12 3-23 9-30 19-7 11-8 26-9 41l-5 44 12 2 8-40 3 30-5 72h19l9-61 4-35 4 35 9 61h19l-5-72 3-30 8 40 12-2-5-44c-1-15-2-30-9-41-7-10-18-16-30-19v-9c7-3 12-11 12-20 0-11-7-19-18-19z" fill={theme.surface}/>
+    </g>
+    {view === "front" ? <g stroke={stroke} strokeWidth="1">
+      <path d="M47 64c8-8 16-11 27-10v35c-13 0-23-4-31-11z" fill={colorFor("chest")}/><path d="M103 64c-8-8-16-11-27-10v35c13 0 23-4 31-11z" fill={colorFor("chest")}/>
+      <ellipse cx="42" cy="69" rx="12" ry="13" fill={colorFor("shoulders")}/><ellipse cx="108" cy="69" rx="12" ry="13" fill={colorFor("shoulders")}/>
+      <path d="M31 82l14 3-8 38-13-3z" fill={colorFor("biceps")}/><path d="M119 82l-14 3 8 38 13-3z" fill={colorFor("biceps")}/>
+      <path d="M58 91h34l-5 44H63z" fill={colorFor("core")}/>
+      <path d="M49 139h22l-5 54H43z" fill={colorFor("quads")}/><path d="M101 139H79l5 54h23z" fill={colorFor("quads")}/>
+      <path d="M43 194h23l-3 34H45z" fill={colorFor("calves")}/><path d="M107 194H84l3 34h18z" fill={colorFor("calves")}/>
+    </g> : <g stroke={stroke} strokeWidth="1">
+      <ellipse cx="42" cy="69" rx="12" ry="13" fill={colorFor("shoulders")}/><ellipse cx="108" cy="69" rx="12" ry="13" fill={colorFor("shoulders")}/>
+      <path d="M48 58h54l-12 62H60z" fill={colorFor("back")}/>
+      <path d="M31 82l14 3-8 38-13-3z" fill={colorFor("triceps")}/><path d="M119 82l-14 3 8 38 13-3z" fill={colorFor("triceps")}/>
+      <path d="M53 126h44l-5 25H58z" fill={colorFor("glutes")}/>
+      <path d="M49 151h22l-5 42H43z" fill={colorFor("hamstrings")}/><path d="M101 151H79l5 42h23z" fill={colorFor("hamstrings")}/>
+      <path d="M43 194h23l-3 34H45z" fill={colorFor("calves")}/><path d="M107 194H84l3 34h18z" fill={colorFor("calves")}/>
+    </g>}
+  </svg>;
 }
 
 function MuscleGroupBreakdown({ workouts }) {
-  const { t } = useLang();
+  const { t, en } = useLang();
   const theme = useTheme();
   const [view, setView] = useState("front");
   const [days, setDays] = useState(7);
@@ -3998,7 +4891,7 @@ function MuscleGroupBreakdown({ workouts }) {
           {[7, 30].map((d) => (
             <button key={d} onClick={() => setDays(d)}
               style={{
-                padding: "4px 9px", borderRadius: 12, fontSize: 12, cursor: "pointer",
+                padding: "4px 9px", borderRadius: 2, fontSize: 12, cursor: "pointer",
                 border: `1px solid ${days === d ? theme.lift : theme.border}`,
                 background: days === d ? tint(theme.lift, 0.16) : "transparent", color: theme.text,
               }}>
@@ -4019,7 +4912,7 @@ function MuscleGroupBreakdown({ workouts }) {
             {["front", "back"].map((v) => (
               <button key={v} onClick={() => setView(v)}
                 style={{
-                  padding: "5px 14px", borderRadius: 12, fontSize: 12, cursor: "pointer",
+                  padding: "5px 14px", borderRadius: 2, fontSize: 12, cursor: "pointer",
                   border: `1px solid ${view === v ? theme.lift : theme.border}`,
                   background: view === v ? tint(theme.lift, 0.16) : "transparent", color: theme.text,
                 }}>
@@ -4035,7 +4928,7 @@ function MuscleGroupBreakdown({ workouts }) {
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10, justifyContent: "center" }}>
             {Object.entries(volume).sort((a, b) => b[1] - a[1]).map(([muscle, sets]) => (
               <div key={muscle} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12, color: theme.textDim }}>
-                <div style={{ width: 8, height: 8, borderRadius: 12, background: mixHex(theme.surfaceRaised, theme.lift, 0.6) }} />
+                <div style={{ width: 8, height: 8, borderRadius: 999, background: mixHex(theme.surfaceRaised, theme.lift, 0.6) }} />
                 {MUSCLE_GROUPS[muscle]?.label(t) || muscle} · {sets}{t("세트", " sets")}
               </div>
             ))}
@@ -4049,7 +4942,7 @@ function MuscleGroupBreakdown({ workouts }) {
 // Start/stop timer for runs — records real start/end timestamps rather
 // than a typed-in duration guess. Ticks live while a run is in progress.
 function RunTimerControl({ form, setForm, prominent = false }) {
-  const { t } = useLang();
+  const { t, en } = useLang();
   const theme = useTheme();
   const [, forceTick] = useState(0);
   useEffect(() => {
@@ -4082,9 +4975,10 @@ function RunTimerControl({ form, setForm, prominent = false }) {
   const elapsedSec = form.startTime
     ? Math.max(0, Math.round(((form.endTime ? new Date(form.endTime) : new Date()) - new Date(form.startTime)) / 1000))
     : 0;
-  const mm = String(Math.floor(elapsedSec / 60)).padStart(2, "0");
+  const hh = Math.floor(elapsedSec / 3600);
+  const mm = String(Math.floor((elapsedSec % 3600) / 60)).padStart(2, "0");
   const ss = String(elapsedSec % 60).padStart(2, "0");
-  const timerText = `${mm}:${ss}`;
+  const timerText = hh > 0 ? `${hh}:${mm}:${ss}` : `${mm}:${ss}`;
   const start = () => setForm({ ...form, startTime: new Date().toISOString(), endTime: "" });
   const stop = () => {
     const endedAt = new Date();
@@ -4101,13 +4995,13 @@ function RunTimerControl({ form, setForm, prominent = false }) {
 
   const actionStyle = {
     width: "100%", minHeight: prominent ? 64 : 42, padding: prominent ? "16px 18px" : "10px",
-    borderRadius: 12, border: "none", color: "#FBFAF2",
+    borderRadius: 2, border: "none", color: "#FBFAF2",
     fontWeight: 800, fontSize: prominent ? 17 : 13, cursor: "pointer", letterSpacing: "0.01em",
   };
 
   if (!form.startTime) {
     return (
-      <button onClick={start} style={{ ...actionStyle, background: theme.run }}>
+      <button onClick={start} style={{ ...actionStyle, background: theme.lift, color: theme.heroText }}>
         {t("러닝 시작", "Start Run")}
       </button>
     );
@@ -4134,17 +5028,18 @@ function RunTimerControl({ form, setForm, prominent = false }) {
       <span style={{ fontSize: prominent ? 28 : 16, fontWeight: 800, color: theme.text, fontVariantNumeric: "tabular-nums" }}>
         {timerText} {t("기록됨", "recorded")}
       </span>
-      <button onClick={reset} style={{ background: "none", border: `1px solid ${theme.border}`, borderRadius: 12, padding: prominent ? "10px 14px" : "6px 10px", color: theme.textDim, fontSize: prominent ? 13 : 11.5, cursor: "pointer" }}>
+      <button onClick={reset} style={{ background: "none", border: `1px solid ${theme.border}`, borderRadius: 2, padding: prominent ? "10px 14px" : "6px 10px", color: theme.textDim, fontSize: prominent ? 13 : 11.5, cursor: "pointer" }}>
         {t("재설정", "Reset")}
       </button>
     </div>
   );
 }
 
-function WorkoutsTab({ workouts, setWorkouts, programs, initialMode, initialEditId, editSignal }) {
-  const { lang, t } = useLang();
+function WorkoutsTab({ isActive = true, modalOnly = false, workouts, setWorkouts, programs, initialMode, initialProgramId, initialEditId, editSignal }) {
+  const { lang, t, en } = useLang();
   const theme = useTheme();
-  const firstProgramName = programs[0]?.name || "기타";
+  const firstProgram = programs.find((p) => p.id === initialProgramId) || programs[0] || null;
+  const firstProgramName = firstProgram?.name || "기타";
   const findProgram = (name) => programs.find((p) => p.name === name);
   const exercisesFor = (name) => makeExercisesFromPlan(findProgram(name)?.exercises, lang);
 
@@ -4154,11 +5049,12 @@ function WorkoutsTab({ workouts, setWorkouts, programs, initialMode, initialEdit
       : { date: todayStr(), type: "lift", subtype: firstProgramName, duration: "", distance: "", hr: "", notes: "", exercises: exercisesFor(firstProgramName) }
   );
   const [showForm, setShowForm] = useState(false);
+  const workoutFormRef = useRef(null);
   const [showProgramPicker, setShowProgramPicker] = useState(false);
   const [guidedProgram, setGuidedProgram] = useState(null);
   const [guidedDraft, setGuidedDraft] = useState(null);
   const [quickLift, setQuickLift] = useState({ date: todayStr(), subtype: firstProgramName, duration: "", notes: "" });
-  const [quickRun, setQuickRun] = useState({ date: todayStr(), subtype: "S.R", durationMin: "", durationSec: "", distance: "", hr: "", notes: "" });
+  const [quickRun, setQuickRun] = useState({ type: "run", date: todayStr(), subtype: "S.R", durationMin: "", durationSec: "", distance: "", hr: "", notes: "" });
 
   const saveQuickLift = () => {
     if (!quickLift.duration && !quickLift.notes.trim()) return;
@@ -4170,7 +5066,7 @@ function WorkoutsTab({ workouts, setWorkouts, programs, initialMode, initialEdit
     const duration = durationMinutesFromParts(quickRun.durationMin, quickRun.durationSec);
     if (!duration && !quickRun.distance && !quickRun.notes.trim()) return;
     setWorkouts([{ id: uid(), date: quickRun.date || todayStr(), type: "run", subtype: quickRun.subtype || "S.R", duration, distance: quickRun.distance, hr: quickRun.hr, notes: quickRun.notes, exercises: [] }, ...workouts]);
-    setQuickRun({ date: todayStr(), subtype: "S.R", durationMin: "", durationSec: "", distance: "", hr: "", notes: "" });
+    setQuickRun({ type: "run", date: todayStr(), subtype: "S.R", durationMin: "", durationSec: "", distance: "", hr: "", notes: "" });
   };
 
   useEffect(() => {
@@ -4214,6 +5110,13 @@ function WorkoutsTab({ workouts, setWorkouts, programs, initialMode, initialEdit
   };
 
   const [editingId, setEditingId] = useState(null);
+  useEffect(() => {
+    if (!isActive && editingId) {
+      setEditingId(null);
+      setShowForm(false);
+    }
+  }, [isActive, editingId]);
+  useEditModalScrollLock(!!editingId && isActive);
   const save = () => {
     const normalizedForm = form.type === "run"
       ? { ...form, duration: durationMinutesFromParts(form.durationMin, form.durationSec) || form.duration }
@@ -4221,7 +5124,7 @@ function WorkoutsTab({ workouts, setWorkouts, programs, initialMode, initialEdit
     if (editingId) {
       setWorkouts(workouts.map((w) => (w.id === editingId ? { ...w, ...normalizedForm } : w)));
     } else {
-      const entry = { id: uid(), ...normalizedForm };
+      const entry = { id: uid(), ...normalizedForm, programId: normalizedForm.type === "lift" ? (findProgram(normalizedForm.subtype)?.id || null) : null };
       setWorkouts([entry, ...workouts]);
     }
     setForm({ date: todayStr(), type: "lift", subtype: firstProgramName, duration: "", distance: "", hr: "", notes: "", exercises: exercisesFor(firstProgramName) });
@@ -4233,12 +5136,14 @@ function WorkoutsTab({ workouts, setWorkouts, programs, initialMode, initialEdit
     const parts = entry.type === "run" ? durationPartsFromMinutes(getDurationMinutes(entry) || 0) : { min: "", sec: "" };
     setShowProgramPicker(false);
     setGuidedProgram(null);
+    const entryType = entry.type || "lift";
+    const entrySubtype = entry.subtype || (entryType === "run" ? "S.R" : firstProgramName);
     setForm({
-      date: entry.date, type: entry.type, subtype: entry.subtype, duration: entry.duration || "",
+      date: entry.date || todayStr(), type: entryType, subtype: entrySubtype, duration: entry.duration || "",
       durationMin: parts.min, durationSec: parts.sec,
       startTime: entry.startTime || "", endTime: entry.endTime || "",
       distance: entry.distance || "", hr: entry.hr || "", notes: entry.notes || "",
-      exercises: entry.exercises || (entry.type === "lift" ? exercisesFor(entry.subtype) : []),
+      exercises: entry.exercises || (entryType === "lift" ? exercisesFor(entrySubtype) : []),
     });
     setEditingId(entry.id);
     setShowForm(true);
@@ -4283,10 +5188,10 @@ function WorkoutsTab({ workouts, setWorkouts, programs, initialMode, initialEdit
       <ConfirmDialog message={t("이 운동 기록을 삭제할까요? 되돌릴 수 없어요.", "Delete this workout entry? This can't be undone.")} onConfirm={confirmRemove} onCancel={() => setConfirmDeleteId(null)} />
     )}
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      {guidedProgram && (
+      {!modalOnly && guidedProgram && (
         <GuidedLiftSession program={guidedProgram} initialDraft={guidedDraft && guidedDraft.programId === guidedProgram.id ? guidedDraft : null} onFinish={finishGuidedSession} onCancel={cancelGuidedSession} />
       )}
-      {!showForm && !guidedProgram && (
+      {!modalOnly && !showForm && !guidedProgram && (
         <div>
           {!showProgramPicker ? (
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -4295,7 +5200,7 @@ function WorkoutsTab({ workouts, setWorkouts, programs, initialMode, initialEdit
                   <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.09em", color: theme.textDim }}>CARDIO SESSION</div>
                   <div style={{ fontFamily: FONT_STACK, fontSize: 23, fontWeight: 750, marginTop: 5 }}>{t("러닝 시작", "Start cardio")}</div>
                   <div style={{ marginTop: 12, paddingTop: 11, borderTop: `1px solid ${tint(theme.heroText, 0.25)}` }}>
-                    <RunTimerControl form={form} setForm={setForm} prominent />
+                    <RunTimerControl form={quickRun} setForm={setQuickRun} prominent />
                   </div>
                 </Card>
               )}
@@ -4303,11 +5208,11 @@ function WorkoutsTab({ workouts, setWorkouts, programs, initialMode, initialEdit
                 const draftProgram = programs.find((p) => p.id === guidedDraft.programId) || programs.find((p) => p.name === guidedDraft.programName);
                 return draftProgram ? (
                   <Card style={{ borderColor: tint(theme.lift, 0.45), background: tint(theme.lift, 0.08) }}>
-                    <SectionTitle>{t("진행 중인 가이드 세션", "In-progress guided session")}</SectionTitle>
+                    <SectionTitle>{en("진행 중인 가이드 세션", "In-progress guided session")}</SectionTitle>
                     <div style={{ fontSize: 13, color: theme.textDim, lineHeight: 1.45, marginBottom: 12 }}>{draftProgram.name} · {t("중간에 멈춘 세션을 이어갈 수 있어요.", "Resume where you left off.")}</div>
                     <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8 }}>
                       <PrimaryButton onClick={() => startGuidedProgram(draftProgram, guidedDraft)}>{t("이어하기", "Resume")}</PrimaryButton>
-                      <button onClick={discardGuidedDraft} style={{ minHeight: 46, padding: "0 14px", borderRadius: 14, border: `1px solid ${theme.danger}`, background: "transparent", color: theme.danger, fontSize: 13, fontWeight: 800, cursor: "pointer" }}>{t("삭제", "Delete")}</button>
+                      <button onClick={discardGuidedDraft} style={{ minHeight: 46, padding: "0 14px", borderRadius: 2, border: `1px solid ${theme.danger}`, background: "transparent", color: theme.danger, fontSize: 13, fontWeight: 800, cursor: "pointer" }}>{t("삭제", "Delete")}</button>
                     </div>
                   </Card>
                 ) : null;
@@ -4318,14 +5223,14 @@ function WorkoutsTab({ workouts, setWorkouts, programs, initialMode, initialEdit
                   <div style={{ fontFamily: FONT_STACK, fontSize: 23, fontWeight: 750, marginTop: 5 }}>{firstProgramName}</div>
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 12, paddingTop: 11, borderTop: `1px solid ${tint(theme.heroText, 0.25)}` }}>
                     <span style={{ fontSize: 12, color: theme.textDim }}>{t("준비된 프로그램", "Prepared program")}</span>
-                    <button onClick={() => startGuidedProgram(programs[0])} style={{ minHeight: 46, padding: "0 14px", borderRadius: 14, border: "none", background: theme.lift, color: "#FBFAF2", fontSize: 14, fontWeight: 800, cursor: "pointer" }}><Dumbbell size={16} style={{ verticalAlign: -3, marginRight: 5 }} />{t("시작", "Start")}</button>
+                    <button type="button" data-no-tab-swipe="true" onClick={() => firstProgram && startGuidedProgram(firstProgram)} disabled={!firstProgram} style={{ minHeight: 46, padding: "0 14px", borderRadius: 2, border: "none", background: theme.lift, color: theme.heroText, fontSize: 14, fontWeight: 800, cursor: "pointer" }}><Dumbbell size={16} style={{ verticalAlign: -3, marginRight: 5 }} />{t("시작", "Start")}</button>
                   </div>
                 </Card>
               )}
 
               {initialMode === "run" ? (
                 <Card>
-                  <SectionTitle>{t("수동 유산소 기록", "Manual cardio log")}</SectionTitle>
+                  <SectionTitle>{en("수동 유산소 기록", "Manual cardio log")}</SectionTitle>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
                     <Field label={t("날짜", "Date")}><TextInput type="date" value={quickRun.date} onChange={(e) => setQuickRun({ ...quickRun, date: e.target.value })} /></Field>
                     <Field label={t("종류", "Type")}><Select value={quickRun.subtype} onChange={(e) => setQuickRun({ ...quickRun, subtype: e.target.value })}>{runSubtypes.map((s) => <option key={s} value={s}>{s === "기타" ? t("기타", "Other") : s === "S.R" ? "Short" : s === "L.R" ? "Long" : s}</option>)}</Select></Field>
@@ -4335,18 +5240,18 @@ function WorkoutsTab({ workouts, setWorkouts, programs, initialMode, initialEdit
                     <Field label={t("평균 심박", "Avg HR")}><UnitInput type="number" inputMode="numeric" unit="bpm" value={quickRun.hr} onChange={(e) => setQuickRun({ ...quickRun, hr: e.target.value })} placeholder="135" /></Field>
                     <Field label={t("메모", "Notes")}><TextInput value={quickRun.notes} onChange={(e) => setQuickRun({ ...quickRun, notes: e.target.value })} placeholder={t("선택", "Optional")} /></Field>
                   </div>
-                  <PrimaryButton onClick={saveQuickRun} disabled={!durationMinutesFromParts(quickRun.durationMin, quickRun.durationSec) && !quickRun.distance && !quickRun.notes.trim()}>{t("수동 기록 저장", "Save manual log")}</PrimaryButton>
+                  <PrimaryButton onClick={saveQuickRun} style={{ touchAction: "manipulation" }} disabled={!durationMinutesFromParts(quickRun.durationMin, quickRun.durationSec) && !quickRun.distance && !quickRun.notes.trim()}>{t("저장", "Save")}</PrimaryButton>
                 </Card>
               ) : (
                 <Card>
-                  <SectionTitle>{t("수동 운동 기록", "Manual training log")}</SectionTitle>
+                  <SectionTitle>{en("수동 운동 기록", "Manual training log")}</SectionTitle>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
                     <Field label={t("날짜", "Date")}><TextInput type="date" value={quickLift.date} onChange={(e) => setQuickLift({ ...quickLift, date: e.target.value })} /></Field>
                     <Field label={t("프로그램", "Program")}><Select value={quickLift.subtype} onChange={(e) => setQuickLift({ ...quickLift, subtype: e.target.value })}>{liftSubtypes.map((s) => <option key={s} value={s}>{s === "기타" ? t("기타", "Other") : s}</option>)}</Select></Field>
                     <Field label={t("시간", "Duration")}><UnitInput type="number" inputMode="numeric" unit={t("분", "min")} value={quickLift.duration} onChange={(e) => setQuickLift({ ...quickLift, duration: e.target.value })} placeholder="45" /></Field>
                     <Field label={t("메모", "Notes")}><TextInput value={quickLift.notes} onChange={(e) => setQuickLift({ ...quickLift, notes: e.target.value })} placeholder={t("선택", "Optional")} /></Field>
                   </div>
-                  <PrimaryButton onClick={saveQuickLift} disabled={!quickLift.duration && !quickLift.notes.trim()}>{t("수동 기록 저장", "Save manual log")}</PrimaryButton>
+                  <PrimaryButton onClick={saveQuickLift} style={{ touchAction: "manipulation" }} disabled={!quickLift.duration && !quickLift.notes.trim()}>{t("수동 기록 저장", "Save manual log")}</PrimaryButton>
                 </Card>
               )}
             </div>
@@ -4356,7 +5261,7 @@ function WorkoutsTab({ workouts, setWorkouts, programs, initialMode, initialEdit
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {programs.map((p) => (
                   <button key={p.id} onClick={() => startGuidedProgram(p)}
-                    style={{ padding: 12, borderRadius: 12, border: `1px solid ${theme.border}`, background: "none", color: theme.text, cursor: "pointer", textAlign: "left", fontSize: 14, fontWeight: 600 }}>
+                    style={{ padding: 12, borderRadius: 2, border: `1px solid ${theme.border}`, background: "none", color: theme.text, cursor: "pointer", textAlign: "left", fontSize: 14, fontWeight: 600 }}>
                     {p.name}
                   </button>
                 ))}
@@ -4365,17 +5270,19 @@ function WorkoutsTab({ workouts, setWorkouts, programs, initialMode, initialEdit
           )}
         </div>
       )}
-      <AnimatedBox>
-        {!showForm ? null : (
-          <Card data-dirty-form={editingId || form.type === "lift" || !!form.startTime || !!form.calories ? "true" : "false"}>
-          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
+      <AnimatedBox style={editingId ? { overflow: "visible", height: "auto" } : undefined}>
+        {!showForm ? null : (() => { const modalNode = (
+          <>
+          {editingId && isActive && <EditModalBackdrop onClose={() => { setShowForm(false); setEditingId(null); }} />}
+          <Card ref={workoutFormRef} role={editingId ? "dialog" : undefined} data-no-tab-swipe={editingId ? "true" : undefined} className={editingId ? "edit-compact-modal" : undefined} style={editingId && isActive ? editModalCardStyle(theme) : undefined} onClick={editingId ? (e) => e.stopPropagation() : undefined} onPointerDown={editingId ? (e) => e.stopPropagation() : undefined} data-dirty-form={editingId || form.type === "lift" || !!form.startTime || !!form.calories ? "true" : "false"}>
+          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: editingId ? 6 : 10 }}>
             <SectionTitle>{editingId ? t("기록 수정", "Edit Entry") : t("새 기록", "New Entry")}</SectionTitle>
             <span data-form-cancel="true" style={{ display: "contents" }}><IconBtn onClick={() => { setShowForm(false); setEditingId(null); }}><X size={16} /></IconBtn></span>
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {form.type === "run" && (
               <div style={{
-                padding: 14, borderRadius: 12, background: tint(theme.run, 0.12),
+                padding: 14, borderRadius: 2, background: tint(theme.run, 0.12),
                 border: `1px solid ${tint(theme.run, 0.42)}`, display: "flex", flexDirection: "column", gap: 10,
               }}>
                 <div style={{ fontSize: 12, fontWeight: 700, color: theme.run, letterSpacing: "0.04em" }}>
@@ -4384,13 +5291,13 @@ function WorkoutsTab({ workouts, setWorkouts, programs, initialMode, initialEdit
                 <RunTimerControl form={form} setForm={setForm} prominent />
               </div>
             )}
-            {(form.type !== "run" || form.endTime || form.duration) && (<>
+            {(form.type !== "run" || editingId || form.endTime || form.duration) && (<>
             {form.type === "lift" && (
-              <div style={{ display: "flex", gap: 6 }}>
+              <div style={{ display: "flex", gap: 6, flexWrap: editingId ? "wrap" : "nowrap", minWidth: 0 }}>
                 {liftSubtypes.map((s) => (
                   <button key={s} onClick={() => chooseSubtype(s)}
                     style={{
-                      flex: 1, padding: "8px 4px", borderRadius: 12, fontSize: 12.5,
+                      flex: editingId ? "1 1 92px" : 1, minWidth: 0, padding: editingId ? "5px 3px" : "8px 4px", borderRadius: 2, fontSize: editingId ? 11.5 : 12.5,
                       border: `1px solid ${form.subtype === s ? theme.lift : theme.border}`,
                       background: form.subtype === s ? tint(theme.lift, 0.16) : "transparent",
                       color: theme.text, cursor: "pointer",
@@ -4401,7 +5308,7 @@ function WorkoutsTab({ workouts, setWorkouts, programs, initialMode, initialEdit
               </div>
             )}
 
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: editingId ? 6 : 10, minWidth: 0 }}>
               <Field label={t("날짜", "Date")}><TextInput type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} /></Field>
               {form.type === "run" && (
                 <Field label={t("종류", "Type")}>
@@ -4424,45 +5331,63 @@ function WorkoutsTab({ workouts, setWorkouts, programs, initialMode, initialEdit
             </div>
 
             {showExerciseEditor && (
-              <ExerciseSetEditor
-                exercises={form.exercises}
-                setExercises={(exercises) => setForm({ ...form, exercises })}
-                workouts={workouts}
-                programName={form.subtype}
-              />
+              editingId ? (
+                <details style={{ borderTop: `1px solid ${theme.border}`, paddingTop: 4 }}>
+                  <summary style={{ fontSize: 11.5, color: theme.textDim, cursor: "pointer", fontWeight: 700 }}>
+                    {t("세트 상세 편집 펼치기", "Expand set details")}
+                  </summary>
+                  <div style={{ marginTop: 6 }}>
+                    <ExerciseSetEditor
+                      exercises={form.exercises}
+                      setExercises={(exercises) => setForm({ ...form, exercises })}
+                      workouts={workouts}
+                      programName={form.subtype}
+                    />
+                  </div>
+                </details>
+              ) : (
+                <ExerciseSetEditor
+                  exercises={form.exercises}
+                  setExercises={(exercises) => setForm({ ...form, exercises })}
+                  workouts={workouts}
+                  programName={form.subtype}
+                />
+              )
             )}
 
             <Field label={t("메모", "Notes")}>
               <textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })}
                 placeholder={form.type === "lift" ? t("컨디션, 폼 체크 등", "Condition, form notes, etc.") : t("예: 컨버세이셔널 페이스 유지", "e.g. Kept a conversational pace")}
-                style={{ ...getInputStyle(theme), minHeight: 50, resize: "vertical", fontFamily: "inherit" }} />
+                style={{ ...getInputStyle(theme), minHeight: editingId ? 34 : 50, maxHeight: editingId ? 54 : undefined, resize: "vertical", fontFamily: "inherit" }} />
             </Field>
             <PrimaryButton onClick={save}>{editingId ? t("수정 완료", "Save Changes") : t("저장", "Save")}</PrimaryButton>
             </>)}
           </div>
         </Card>
-        )}
+          </>
+        ); return editingId && isActive ? createPortal(modalNode, document.body) : modalNode; })()}
       </AnimatedBox>
 
-      {workouts.length > 0 && <MuscleGroupBreakdown workouts={workouts} />}
+      {!modalOnly && workouts.length > 0 && <MuscleGroupBreakdown workouts={workouts} />}
 
-      {workouts.length > 3 && (
+      {!modalOnly && workouts.length > 3 && (
         <div style={{ position: "relative" }}>
           <Search size={14} color={theme.textFaint} style={{ position: "absolute", left: 12, top: 11 }} />
           <TextInput value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t("운동/메모 검색", "Search workouts/notes")} style={{ paddingLeft: 32 }} />
         </div>
       )}
 
+      {!modalOnly && (
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {sorted.length === 0 && <EmptyState icon={Dumbbell} text={search ? t("검색 결과가 없습니다.", "No matching entries.") : t("아직 기록이 없습니다. 첫 세션을 기록해보세요.", "No entries yet. Log your first session.")} actionLabel={null} onAction={null} />}
-        {sorted.map((w) => {
+        {sorted.map((w, i) => {
           const exSummary = formatExerciseSummary(w.exercises);
           return (
-            <Card key={w.id} style={{ padding: 12 }}>
+            <Card key={w.id} style={{ padding: 12, ...staggerStyle(i) }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                 <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
                   <div style={{
-                    width: 34, height: 34, borderRadius: 12, flexShrink: 0,
+                    width: 34, height: 34, borderRadius: 2, flexShrink: 0,
                     background: w.type === "lift" ? tint(theme.lift, 0.16) : tint(theme.run, 0.16),
                     display: "flex", alignItems: "center", justifyContent: "center",
                   }}>
@@ -4490,6 +5415,7 @@ function WorkoutsTab({ workouts, setWorkouts, programs, initialMode, initialEdit
           );
         })}
       </div>
+      )}
     </div>
     </>
   );
@@ -4498,8 +5424,8 @@ function WorkoutsTab({ workouts, setWorkouts, programs, initialMode, initialEdit
 /* ---------------------------------------------------------
    NUTRITION TAB
 --------------------------------------------------------- */
-function FoodCalculator({ date, customFoods, setCustomFoods, onAdd }) {
-  const { lang, t } = useLang();
+function FoodCalculator({ date, mealCategory, onMealCategoryChange, customFoods, setCustomFoods, onAdd }) {
+  const { lang, t, en } = useLang();
   const theme = useTheme();
   const foodName = (f) => (lang === "en" && f.nameEn ? f.nameEn : f.name);
   const [query, setQuery] = useState("");
@@ -4536,7 +5462,7 @@ function FoodCalculator({ date, customFoods, setCustomFoods, onAdd }) {
   const addToLog = () => {
     if (!selected || !computed) return;
     onAdd({
-      date, meal: `${foodName(selected)} ${grams}g`,
+      date, mealCategory, meal: `${foodName(selected)} ${grams}g`,
       calories: computed.cal, protein: computed.p, carbs: computed.c, fat: computed.f,
     });
     setSelected(null); setQuery(""); setGrams(100);
@@ -4545,7 +5471,12 @@ function FoodCalculator({ date, customFoods, setCustomFoods, onAdd }) {
   return (
     <Card>
       <SectionTitle right={<Calculator size={14} color={theme.textFaint} />}>{t("음식 칼로리 계산기", "Food Calorie Calculator")}</SectionTitle>
-      <div style={{ position: "relative", marginBottom: 8 }}>
+      <Field label={t("끼니 카테고리", "Meal category")}>
+        <Select value={mealCategory || "other"} onChange={(e) => onMealCategoryChange?.(e.target.value)}>
+          {MEAL_CATEGORIES.map((cat) => <option key={cat} value={cat}>{mealCategoryLabel(cat, t)}</option>)}
+        </Select>
+      </Field>
+      <div style={{ position: "relative", marginTop: 8, marginBottom: 8 }}>
         <div style={{ position: "relative" }}>
           <Search size={14} color={theme.textFaint} style={{ position: "absolute", left: 10, top: 11 }} />
           <TextInput
@@ -4559,7 +5490,7 @@ function FoodCalculator({ date, customFoods, setCustomFoods, onAdd }) {
           <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 4, maxHeight: 200, overflowY: "auto" }}>
             {filtered.map((f, i) => (
               <button key={i} onClick={() => { setSelected(f); setQuery(foodName(f)); }}
-                style={{ textAlign: "left", background: theme.surfaceRaised, border: `1px solid ${theme.border}`, borderRadius: 12, padding: "8px 10px", color: theme.text, fontSize: 12.5, cursor: "pointer" }}>
+                style={{ textAlign: "left", background: theme.surfaceRaised, border: `1px solid ${theme.border}`, borderRadius: 2, padding: "8px 10px", color: theme.text, fontSize: 12.5, cursor: "pointer" }}>
                 {foodName(f)} <span style={{ color: theme.textFaint }}>· {f.cal}kcal/100g</span>
               </button>
             ))}
@@ -4600,7 +5531,7 @@ function FoodCalculator({ date, customFoods, setCustomFoods, onAdd }) {
           <Field label={t("섭취량(g)", "Amount (g)")}>
             <TextInput type="number" value={grams} onChange={(e) => setGrams(e.target.value)} />
           </Field>
-          <div style={{ background: theme.surfaceRaised, borderRadius: 12, padding: 10, display: "flex", justifyContent: "space-between", fontSize: 12.5 }}>
+          <div style={{ background: theme.surfaceRaised, borderRadius: 2, padding: 10, display: "flex", justifyContent: "space-between", fontSize: 12.5 }}>
             <div><span style={{ color: theme.run, fontWeight: 700 }}>{computed.cal}</span> <span style={{ color: theme.textFaint }}>kcal</span></div>
             <div>{t("단백", "P")} <b style={{ color: theme.text }}>{computed.p}</b>g</div>
             <div>{t("탄수", "C")} <b style={{ color: theme.text }}>{computed.c}</b>g</div>
@@ -4614,10 +5545,10 @@ function FoodCalculator({ date, customFoods, setCustomFoods, onAdd }) {
 }
 
 function MacroBar({ label, consumed, target, lightMode, theme }) {
-  const { t } = useLang();
+  const { t, en } = useLang();
   const consumedPct = target > 0 ? (consumed / target) * 100 : 0;
   const over = consumed > target;
-  const remainingPct = Math.max(0, 100 - consumedPct);
+  const fillPct = Math.max(0, Math.min(100, consumedPct));
   const isLightHero = theme.heroText?.toUpperCase() === "#FBFAF2";
   const trackColor = lightMode ? (isLightHero ? "rgba(255,255,255,0.22)" : "rgba(0,0,0,0.18)") : theme.surfaceRaised;
   const fillColor = over ? theme.danger : (lightMode ? theme.heroText : theme.lift);
@@ -4631,26 +5562,34 @@ function MacroBar({ label, consumed, target, lightMode, theme }) {
           {over ? `+${Math.round(consumed - target)}g ${t("초과", "over")}` : `${Math.round(target - consumed)}g ${t("남음", "left")}`}
         </span>
       </div>
-      <div style={{ height: 4, borderRadius: 12, background: trackColor, overflow: "hidden" }}>
+      <div style={{ height: 4, borderRadius: 999, background: trackColor, overflow: "hidden" }}>
         <div style={{
-          height: "100%", borderRadius: 12, transition: "width 0.2s ease",
-          width: `${over ? 100 : remainingPct}%`, background: fillColor,
+          height: "100%", borderRadius: 2, transition: "width 0.2s ease",
+          width: `${fillPct}%`, background: fillColor,
         }} />
       </div>
     </div>
   );
 }
 
-function NutritionTab({ settings, bodycomp, workouts, nutrition, setNutrition, customFoods, setCustomFoods, recentAvgSteps, resetSignal }) {
-  const { t } = useLang();
+function NutritionTab({ isActive = true, settings, onSaveSettings, bodycomp, workouts, nutrition, setNutrition, customFoods, setCustomFoods, recentAvgSteps, resetSignal }) {
+  const { t, en } = useLang();
   const theme = useTheme();
-  const [form, setForm] = useState({ date: todayStr(), meal: "", calories: "", protein: "", carbs: "", fat: "", quality: null });
+  const [form, setForm] = useState({ date: todayStr(), mealCategory: "other", meal: "", calories: "", protein: "", carbs: "", fat: "", quality: null });
   const [showForm, setShowForm] = useState(false);
   const [mode, setMode] = useState("calc"); // 'calc' | 'manual'
   const [targetFlipped, setTargetFlipped] = useState(false);
   const [targetFlipAnim, setTargetFlipAnim] = useState(false);
 
   const [editingId, setEditingId] = useState(null);
+  const nutritionFormRef = useRef(null);
+  useEffect(() => {
+    if (!isActive && editingId) {
+      setEditingId(null);
+      setShowForm(false);
+    }
+  }, [isActive, editingId]);
+  useEditModalScrollLock(!!editingId && isActive);
 
   useEffect(() => {
     setShowForm(false);
@@ -4658,7 +5597,7 @@ function NutritionTab({ settings, bodycomp, workouts, nutrition, setNutrition, c
     setTargetFlipped(false);
     setTargetFlipAnim(false);
     setEditingId(null);
-    setForm({ date: todayStr(), meal: "", calories: "", protein: "", carbs: "", fat: "", quality: null });
+    setForm({ date: todayStr(), mealCategory: "other", meal: "", calories: "", protein: "", carbs: "", fat: "", quality: null });
   }, [resetSignal]);
 
   const save = () => {
@@ -4672,13 +5611,13 @@ function NutritionTab({ settings, bodycomp, workouts, nutrition, setNutrition, c
     } else {
       setNutrition([{ id: uid(), ...form, quality }, ...nutrition]);
     }
-    setForm({ date: form.date, meal: "", calories: "", protein: "", carbs: "", fat: "", quality: null });
+    setForm({ date: form.date, mealCategory: form.mealCategory || "other", meal: "", calories: "", protein: "", carbs: "", fat: "", quality: null });
     setEditingId(null);
     setShowForm(false);
   };
   const startEdit = (entry) => {
     setForm({
-      date: entry.date, meal: entry.meal || "", calories: String(entry.calories || ""),
+      date: entry.date, mealCategory: entry.mealCategory || inferMealCategory(entry.meal), meal: entry.meal || "", calories: String(entry.calories || ""),
       protein: entry.protein ? String(entry.protein) : "", carbs: entry.carbs ? String(entry.carbs) : "",
       fat: entry.fat ? String(entry.fat) : "", quality: entry.quality ?? null,
     });
@@ -4688,7 +5627,7 @@ function NutritionTab({ settings, bodycomp, workouts, nutrition, setNutrition, c
   };
   // Food-calculator entries come from a structured food database with
   // known gram amounts, so they're treated as the highest-quality tier.
-  const addComputed = (entry) => setNutrition([{ id: uid(), ...entry, quality: 1.0 }, ...nutrition]);
+  const addComputed = (entry) => setNutrition([{ id: uid(), mealCategory: entry.mealCategory || form.mealCategory || "other", ...entry, quality: 1.0 }, ...nutrition]);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const remove = (id) => setConfirmDeleteId(id);
   const confirmRemove = () => {
@@ -4709,7 +5648,7 @@ function NutritionTab({ settings, bodycomp, workouts, nutrition, setNutrition, c
 
   const quickFillFrom = (entry) => {
     setForm({
-      date: todayStr(), meal: entry.meal || "", calories: String(entry.calories || ""),
+      date: todayStr(), mealCategory: entry.mealCategory || inferMealCategory(entry.meal), meal: entry.meal || "", calories: String(entry.calories || ""),
       protein: entry.protein ? String(entry.protein) : "", carbs: entry.carbs ? String(entry.carbs) : "",
       fat: entry.fat ? String(entry.fat) : "", quality: entry.quality ?? null,
     });
@@ -4730,14 +5669,31 @@ function NutritionTab({ settings, bodycomp, workouts, nutrition, setNutrition, c
   // Today's target, resolved from the same mode/tier chosen on Home / Maintenance.
   const sortedBc = [...bodycomp].sort((a, b) => a.date.localeCompare(b.date));
   const currentWeight = sortedBc[sortedBc.length - 1]?.weight ?? (settings.startWeight || null);
-  const currentBF = sortedBc[sortedBc.length - 1]?.bodyfat ?? null;
+  const currentBF = sortedBc[sortedBc.length - 1]?.bodyfat ?? (settings.startBF || null);
   const engine = useMemo(
     () => estimateTdeeEngine(settings, bodycomp, nutrition, workouts, currentWeight, recentAvgSteps),
     [settings, bodycomp, nutrition, workouts, currentWeight, recentAvgSteps]
   );
   const observed = useMemo(() => computeObservedTdee(bodycomp, nutrition, 14), [bodycomp, nutrition]);
-  const effectiveTdee = settings.acceptedTdee ?? (engine ? engine.initialTdee : observed?.tdee ?? null);
-  const dailyTarget = computeActiveTarget(settings, effectiveTdee, currentWeight, currentBF);
+  const effectiveTdee = targetTdee(settings, engine) ?? observed?.tdee ?? null;
+  const baseDailyTarget = computeActiveTarget(settings, effectiveTdee, currentWeight, currentBF, engine?.bmr);
+  const dailyTarget = applyCheatDayTarget(settings, baseDailyTarget, effectiveTdee, engine?.bmr);
+  const normalDailyTarget = baseDailyTarget?.target ?? null;
+  const displayDailyTarget = dailyTarget?.target ?? normalDailyTarget;
+
+  useEffect(() => {
+    if (!settings.cheatDayActive || settings.cheatDayUsedDate !== todayStr()) return undefined;
+    const now = nowDate();
+    const end = nowDate();
+    end.setHours(23, 59, 0, 0);
+    const delay = Math.max(1000, end.getTime() - now.getTime());
+    const timer = setTimeout(() => {
+      if (shouldReclaimUnusedCheatDay(settings, nutrition, normalDailyTarget, todayStr())) {
+        onSaveSettings(reclaimCheatDaySettings(settings));
+      }
+    }, delay);
+    return () => clearTimeout(timer);
+  }, [settings, nutrition, normalDailyTarget, onSaveSettings]);
 
   const todayTotals = useMemo(() => {
     return nutrition.filter((n) => n.date === todayStr()).reduce((acc, i) => ({
@@ -4750,6 +5706,29 @@ function NutritionTab({ settings, bodycomp, workouts, nutrition, setNutrition, c
 
   const modeLabel = dailyTarget?.blocked ? t("유지", "Maintenance") : { cut: t("다이어트", "Cut"), maintain: t("유지어트", "Maintain"), gain: t("증량", "Gain") }[dailyTarget?.mode];
 
+  const weekKey = weekStartKey();
+  const cheatDayActive = settings.cheatDayActive && settings.cheatDayUsedWeekKey === weekKey && settings.cheatDayUsedDate === todayStr();
+  const cheatDayAlreadyUsed = settings.cheatDayUsedWeekKey === weekKey && !!settings.cheatDayUsedDate;
+  const toggleCheatDay = () => {
+    if (cheatDayActive) {
+      onSaveSettings(reclaimCheatDaySettings(settings));
+      return;
+    }
+    if (cheatDayAlreadyUsed) {
+      window.alert(t("이번 주 치팅데이는 이미 사용했습니다.", "You already used this week's cheat day."));
+      return;
+    }
+    onSaveSettings({
+      ...settings,
+      cheatDayEnabled: true,
+      cheatDayActive: true,
+      cheatDayWeekKey: weekKey,
+      cheatDayDate: todayStr(),
+      cheatDayUsedWeekKey: weekKey,
+      cheatDayUsedDate: todayStr(),
+    });
+  };
+
   return (
     <>
     {confirmDeleteId && (
@@ -4757,13 +5736,16 @@ function NutritionTab({ settings, bodycomp, workouts, nutrition, setNutrition, c
     )}
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <ScreenHeader
-        eyebrow={t("영양", "Eat")}
-        title={t("EAT", "EAT")}
-        subtitle={t("Fuel your goals.", "Fuel your goals.")}
-        color={theme.eat || theme.lift}
+        eyebrow="Nutrition"
+        title="Eat"
+        subtitle={t("식사, 간식, 칼로리와 영양을 기록합니다.", "Log meals, snacks and nutrition.")}
       />
+      <button onClick={toggleCheatDay} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "11px 13px", background: cheatDayActive ? tint(theme.lift,.15) : "transparent", border: `1px solid ${cheatDayActive ? theme.lift : theme.border}`, color: theme.text, cursor: "pointer" }}>
+        <div><div style={{ fontSize: 12.5, fontWeight: 800 }}>{t("오늘을 치팅데이로 사용", "Use cheat-day budget today")}</div><div style={{ fontSize: 10.5, color: theme.textFaint, marginTop: 3 }}>{t("주 1회 제한 · 일반 목표 미초과 시 23:59 자동 복구", "Once per week · auto-reclaimed at 23:59 if unused")}</div></div>
+        <div style={{ width: 44, height: 26, borderRadius: 2, background: cheatDayActive ? theme.lift : theme.surfaceRaised, position: "relative", flexShrink: 0, transition: "background 0.2s ease" }}><div style={{ position: "absolute", top: 3, left: cheatDayActive ? 21 : 3, width: 20, height: 20, borderRadius: 2, background: "#F5F5F3", transition: "left 0.2s ease" }}/></div>
+      </button>
       {dailyTarget && (() => {
-        const target = dailyTarget.target;
+        const target = displayDailyTarget;
         const consumedCal = todayTotals.cal;
         const over = consumedCal > target;
         const remainingPct = Math.max(0, 100 - (consumedCal / target) * 100);
@@ -4772,81 +5754,76 @@ function NutritionTab({ settings, bodycomp, workouts, nutrition, setNutrition, c
           cal: entries.reduce((s, e) => s + (+e.calories || 0), 0),
         }));
         return (
-          <Card
-            variant="feature"
-            accent={theme.eat || theme.lift}
-            onClick={() => {
-              if (targetFlipAnim) return; // ignore rapid re-taps while a flip is already in progress
-              setTargetFlipAnim(true);
-              setTimeout(() => { setTargetFlipped((f) => !f); setTargetFlipAnim(false); }, 150);
-            }}
-            style={{
-              background: targetFlipped ? theme.surface : `linear-gradient(135deg, ${tint(theme.eat || theme.lift, theme.isDark ? 0.16 : 0.12)}, ${theme.surface})`,
-              border: `1px solid ${tint(theme.eat || theme.lift, 0.28)}`,
-              borderTop: `4px solid ${theme.eat || theme.lift}`,
-              position: "relative", padding: 16, cursor: "pointer",
-              transition: "height 0.35s cubic-bezier(0.25, 0.1, 0.25, 1), transform 0.15s ease-in-out",
-              transform: targetFlipAnim ? "rotateY(90deg)" : "rotateY(0deg)",
-            }}
-          >
-            {!targetFlipped ? (
-              <div>
-                <SectionTitle right={<span style={{ fontSize: 12, color: theme.textDim }}>{modeLabel}</span>}>
-                  <span style={{ color: theme.text }}>{t("오늘의 목표", "Today's Target")}</span>
-                </SectionTitle>
-                {dailyTarget?.blocked && (
-                  <div style={{ fontSize: 12, color: theme.text, background: "rgba(0,0,0,0.18)", borderRadius: 12, padding: "6px 8px", marginBottom: 8, fontWeight: 700, lineHeight: 1.4 }}>
-                    {t("⚠ 건강 상태 설정으로 다이어트 목표 대신 유지 칼로리를 보여드려요.", "⚠ Showing maintenance calories instead of a cut target, based on your health settings.")}
-                  </div>
-                )}
-                <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 8 }}>
-                  <span style={{ fontSize: 30, fontWeight: 850, color: over ? theme.danger : theme.text, fontVariantNumeric: "tabular-nums" }}>
-                    {over ? `+${Math.round(consumedCal - target)}` : Math.round(target - consumedCal)}
-                  </span>
-                  <span style={{ fontSize: 12, color: theme.textDim }}>{over ? t("kcal 초과", "kcal over") : t("kcal 남음", "kcal remaining")}</span>
-                </div>
-                <div style={{ height: 5, borderRadius: 0, background: theme.surfaceRaised, overflow: "hidden", marginBottom: 6 }}>
-                  <div style={{
-                    height: "100%", borderRadius: 12, transition: "width 0.2s ease",
-                    width: `${over ? 100 : remainingPct}%`,
-                    background: over ? theme.danger : theme.lift,
-                  }} />
-                </div>
-                <div style={{ fontSize: 13, color: theme.textDim, marginBottom: 2 }}>
-                  {t(`목표 ${Math.round(target)} · 섭취 ${Math.round(consumedCal)}`, `Target ${Math.round(target)} · Eaten ${Math.round(consumedCal)}`)}
-                </div>
-                <InsightLine>{over ? t(`오늘 목표보다 ${Math.round(consumedCal - target)} kcal 높은 상태예요.`, `${Math.round(consumedCal - target)} kcal above today’s target.`) : t(`오늘 기록에 ${Math.round(target - consumedCal)} kcal 여유가 남아 있어요.`, `${Math.round(target - consumedCal)} kcal remain for today.`)}</InsightLine>
-                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  <MacroBar label={t("단백질", "Protein")} consumed={todayTotals.p} target={dailyTarget.macros.proteinG} lightMode theme={theme} />
-                  <MacroBar label={t("탄수화물", "Carbs")} consumed={todayTotals.c} target={dailyTarget.macros.carbG} lightMode theme={theme} />
-                  <MacroBar label={t("지방", "Fat")} consumed={todayTotals.f} target={dailyTarget.macros.fatG} lightMode theme={theme} />
-                </div>
-              </div>
-            ) : (
-              <div onClick={(e) => e.stopPropagation()} style={{ cursor: "default" }}>
-                <SectionTitle right={<span style={{ fontSize: 12, color: theme.textFaint }}>{t("탭해서 뒤집기", "Tap to flip back")}</span>}>
-                  {t("일별 섭취 기록", "Daily Intake History")}
-                </SectionTitle>
-                {dailyHistory.length === 0 ? (
-                  <EmptyState text={t("아직 기록이 없습니다.", "No entries yet.")} />
-                ) : (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                    {dailyHistory.map(({ date, cal }) => {
-                      const dayOver = cal > target;
-                      return (
-                        <div key={date} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 0", borderBottom: `1px solid ${theme.border}` }}>
-                          <span style={{ fontSize: 12.5, color: theme.textDim }}>{fmtDate(date)}</span>
-                          <span style={{ fontSize: 12.5, fontWeight: 700, color: dayOver ? theme.danger : theme.text, fontVariantNumeric: "tabular-nums" }}>
-                            {Math.round(cal)} kcal
-                          </span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
+          <div>
+            {dailyTarget?.blocked && (
+              <div style={{ fontSize: 11.5, color: theme.textDim, borderLeft: `2px solid ${theme.lift}`, paddingLeft: 10, marginBottom: 14, lineHeight: 1.4 }}>
+                {t("⚠ 건강 상태 설정으로 다이어트 목표 대신 유지 칼로리를 표시 중.", "⚠ Showing maintenance calories instead of a cut target, per your health settings.")}
               </div>
             )}
-          </Card>
+            {/* LEAD NUMBER — calories remaining/over */}
+            <div style={{ fontSize: 10.5, fontFamily: MONO_FONT_STACK, letterSpacing: "0.18em", textTransform: "uppercase", color: theme.textFaint }}>
+              {over ? en("칼로리 초과", "Calories Over") : en("칼로리 남음", "Calories Left")}
+            </div>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginTop: 8 }}>
+              <span style={{ fontSize: 48, fontWeight: 800, lineHeight: 0.9, fontVariantNumeric: "tabular-nums", letterSpacing: "-0.02em", color: over ? theme.danger : theme.text }}>
+                {over ? Math.round(consumedCal - target).toLocaleString() : Math.round(target - consumedCal).toLocaleString()}
+              </span>
+              <span style={{ fontSize: 12, color: theme.textDim, fontFamily: MONO_FONT_STACK }}>kcal</span>
+            </div>
+            <div style={{ marginTop: 12 }}>
+              <ProgressLine value={over ? 100 : Math.min(100, (consumedCal / Math.max(1, target)) * 100)} color={over ? theme.danger : theme.lift} />
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10.5, color: theme.textFaint, marginTop: 7, fontFamily: MONO_FONT_STACK, letterSpacing: "0.04em" }}>
+                <span>{en("섭취", "INTAKE")} {Math.round(consumedCal).toLocaleString()}</span>
+                <span>{en("목표", "TARGET")} {Math.round(target).toLocaleString()}</span>
+              </div>
+            </div>
+
+            {/* MACRO SPEC TABLE */}
+            <div style={{ marginTop: 20 }}>
+              {[
+                { label: en("단백질", "Protein"), consumed: todayTotals.p, target: dailyTarget.macros.proteinG },
+                { label: en("탄수화물", "Carbs"), consumed: todayTotals.c, target: dailyTarget.macros.carbG },
+                { label: en("지방", "Fat"), consumed: todayTotals.f, target: dailyTarget.macros.fatG },
+              ].map((m) => {
+                const pct = m.target > 0 ? Math.min(100, (m.consumed / m.target) * 100) : 0;
+                return (
+                  <div key={m.label} style={{ display: "grid", gridTemplateColumns: "68px 1fr 92px", alignItems: "center", gap: 12, padding: "12px 0", borderTop: `1px solid ${theme.border}` }}>
+                    <span style={{ fontSize: 10.5, fontFamily: MONO_FONT_STACK, letterSpacing: "0.08em", textTransform: "uppercase", color: theme.textDim }}>{m.label}</span>
+                    <div style={{ height: 3, background: theme.surfaceRaised, borderRadius: 2, overflow: "hidden" }}>
+                      <div style={{ height: "100%", width: `${pct}%`, background: theme.lift, transition: "width 0.2s ease" }} />
+                    </div>
+                    <span style={{ fontSize: 12.5, fontVariantNumeric: "tabular-nums", color: theme.text, textAlign: "right", fontFamily: MONO_FONT_STACK }}>
+                      {Math.round(m.consumed)}<span style={{ color: theme.textFaint }}> / {m.target}g</span>
+                    </span>
+                  </div>
+                );
+              })}
+              <RuleLine />
+            </div>
+
+            {/* INTAKE HISTORY — collapsible, not a hidden flip */}
+            {dailyHistory.length > 0 && (
+              <details style={{ marginTop: 16 }}>
+                <summary style={{ fontSize: 10.5, fontFamily: MONO_FONT_STACK, letterSpacing: "0.16em", textTransform: "uppercase", color: theme.textFaint, cursor: "pointer", listStyle: "none", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <span>{en("일별 섭취 기록", "Intake History")}</span>
+                  <ChevronDown size={13} />
+                </summary>
+                <div style={{ marginTop: 8 }}>
+                  {dailyHistory.map(({ date, cal }) => {
+                    const dayOver = cal > target;
+                    return (
+                      <div key={date} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderTop: `1px solid ${theme.border}` }}>
+                        <span style={{ fontSize: 12.5, fontStyle: "italic", fontFamily: SERIF_FONT_STACK, color: theme.textDim }}>{fmtDate(date)}</span>
+                        <span style={{ fontSize: 12, fontFamily: MONO_FONT_STACK, fontVariantNumeric: "tabular-nums", color: dayOver ? theme.danger : theme.text }}>
+                          {Math.round(cal).toLocaleString()} kcal
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </details>
+            )}
+          </div>
         );
       })()}
 
@@ -4860,10 +5837,10 @@ function NutritionTab({ settings, bodycomp, workouts, nutrition, setNutrition, c
               <button key={entry.id} onClick={() => quickFillFrom(entry)}
                 style={{
                   flexShrink: 0, display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 2,
-                  padding: "7px 10px", borderRadius: 12, border: `1px solid ${theme.border}`,
+                  padding: "7px 10px", borderRadius: 2, border: `1px solid ${theme.border}`,
                   background: theme.surfaceRaised, color: theme.text, cursor: "pointer", minWidth: 88,
                 }}>
-                <span style={{ fontSize: 12, fontWeight: 700 }}>{entry.meal || t("기록", "Entry")}</span>
+                <span style={{ fontSize: 12, fontWeight: 700 }}>{entry.meal || mealCategoryLabel(entry.mealCategory || inferMealCategory(entry.meal), t)}</span>
                 <span style={{ fontSize: 12, color: theme.textFaint }}>{entry.calories}kcal</span>
               </button>
             ))}
@@ -4872,32 +5849,36 @@ function NutritionTab({ settings, bodycomp, workouts, nutrition, setNutrition, c
       )}
 
       <div style={{ display: "flex", gap: 6 }}>
-        <button onClick={() => { setMode("calc"); setShowForm(false); setEditingId(null); }}
-          style={{ flex: 1, padding: 9, borderRadius: 12, fontSize: 12.5, border: `1px solid ${mode === "calc" ? theme.lift : theme.border}`, background: mode === "calc" ? tint(theme.lift, 0.16) : "transparent", color: theme.text, cursor: "pointer" }}>
+        <button type="button" data-no-tab-swipe="true" onClick={() => { setMode("calc"); setShowForm(false); setEditingId(null); }}
+          style={{ flex: 1, minHeight: 44, borderRadius: 2, fontSize: 12, fontWeight: 600, border: `1px solid ${mode === "calc" ? theme.lift : theme.border}`, background: mode === "calc" ? theme.lift : "transparent", color: mode === "calc" ? (theme.heroText || "#0A0A0A") : theme.textDim, cursor: "pointer" }}>
           {t("음식 계산기", "Food Calculator")}
         </button>
-        <button onClick={() => { setMode("manual"); setShowForm(true); setEditingId(null); }}
-          style={{ flex: 1, padding: 9, borderRadius: 12, fontSize: 12.5, border: `1px solid ${mode === "manual" ? theme.lift : theme.border}`, background: mode === "manual" ? tint(theme.lift, 0.16) : "transparent", color: theme.text, cursor: "pointer" }}>
+        <button type="button" data-no-tab-swipe="true" onClick={() => { setMode("manual"); setShowForm(true); setEditingId(null); setForm({ date: todayStr(), mealCategory: "other", meal: "", calories: "", protein: "", carbs: "", fat: "", quality: null }); }}
+          style={{ flex: 1, minHeight: 44, borderRadius: 2, fontSize: 12, fontWeight: 600, border: `1px solid ${mode === "manual" ? theme.lift : theme.border}`, background: mode === "manual" ? theme.lift : "transparent", color: mode === "manual" ? (theme.heroText || "#0A0A0A") : theme.textDim, cursor: "pointer" }}>
           {t("직접 입력", "Manual Entry")}
         </button>
       </div>
 
       <AnimatedBox>
         {mode === "calc" ? (
-          <FoodCalculator date={form.date} customFoods={customFoods} setCustomFoods={setCustomFoods} onAdd={addComputed} />
+          <FoodCalculator date={form.date} mealCategory={form.mealCategory} onMealCategoryChange={(mealCategory) => setForm({ ...form, mealCategory })} customFoods={customFoods} setCustomFoods={setCustomFoods} onAdd={addComputed} />
         ) : (
           !showForm ? (
             <PrimaryButton onClick={() => setShowForm(true)}><Plus size={16} /> {t("식사 기록 추가", "Add Meal")}</PrimaryButton>
           ) : (
-            <Card>
+            (() => { const modalNode = (
+            <>
+            {editingId && isActive && <EditModalBackdrop onClose={() => { setShowForm(false); setEditingId(null); }} />}
+            <Card ref={nutritionFormRef} role={editingId ? "dialog" : undefined} data-no-tab-swipe={editingId ? "true" : undefined} className={editingId ? "edit-compact-modal" : undefined} style={editingId && isActive ? editModalCardStyle(theme) : undefined} onClick={editingId ? (e) => e.stopPropagation() : undefined} onPointerDown={editingId ? (e) => e.stopPropagation() : undefined}>
               <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
-                <SectionTitle>{t("새 식사", "New Meal")}</SectionTitle>
+                <SectionTitle>{editingId ? t("식단 수정", "Edit Meal") : en("새 식사", "New Meal")}</SectionTitle>
                 <IconBtn onClick={() => setShowForm(false)}><X size={16} /></IconBtn>
               </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: editingId ? 6 : 10 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: editingId ? 6 : 10, minWidth: 0 }}>
                   <Field label={t("날짜", "Date")}><TextInput type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} /></Field>
-                  <Field label={t("식사명(선택)", "Meal name (optional)")}><TextInput value={form.meal} onChange={(e) => setForm({ ...form, meal: e.target.value })} placeholder={t("점심", "Lunch")} /></Field>
+                  <Field label={t("끼니 카테고리", "Meal category")}><Select value={form.mealCategory || "other"} onChange={(e) => setForm({ ...form, mealCategory: e.target.value })}>{MEAL_CATEGORIES.map((cat) => <option key={cat} value={cat}>{mealCategoryLabel(cat, t)}</option>)}</Select></Field>
+                  <Field label={t("아이템명(선택)", "Item name (optional)")}><TextInput value={form.meal} onChange={(e) => setForm({ ...form, meal: e.target.value })} placeholder={t("닭가슴살 / 라떼 / 외식", "Chicken / latte / eating out")} /></Field>
                   <Field label={t("단백질(g)", "Protein (g)")}><TextInput type="number" value={form.protein} onChange={(e) => {
                     const protein = e.target.value;
                     setForm({ ...form, protein, calories: autoCalories(protein, form.carbs, form.fat) });
@@ -4924,7 +5905,7 @@ function NutritionTab({ settings, bodycomp, workouts, nutrition, setNutrition, c
                     ].map((opt) => (
                       <button key={opt.id} onClick={() => setForm({ ...form, quality: opt.q })}
                         style={{
-                          flex: 1, padding: "6px 2px", borderRadius: 12, fontSize: 12, cursor: "pointer",
+                          flex: 1, padding: editingId ? "4px 2px" : "6px 2px", borderRadius: 2, fontSize: editingId ? 11 : 12, cursor: "pointer",
                           border: `1px solid ${form.quality === opt.q ? theme.lift : theme.border}`,
                           background: form.quality === opt.q ? tint(theme.lift, 0.16) : "transparent",
                           color: theme.text, fontWeight: form.quality === opt.q ? 700 : 500,
@@ -4937,13 +5918,15 @@ function NutritionTab({ settings, bodycomp, workouts, nutrition, setNutrition, c
                 <PrimaryButton onClick={save} disabled={!form.calories}>{editingId ? t("수정 완료", "Save Changes") : t("저장", "Save")}</PrimaryButton>
               </div>
             </Card>
+            </>
+            ); return editingId && isActive ? createPortal(modalNode, document.body) : modalNode; })()
           )
         )}
       </AnimatedBox>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         {byDate.length === 0 && <EmptyState icon={Utensils} text={t("아직 식사 기록이 없습니다.", "No meals logged yet.")} />}
-        {byDate.map(([date, items]) => {
+        {byDate.map(([date, items], gi) => {
           const totals = items.reduce((acc, i) => ({
             cal: acc.cal + (+i.calories || 0),
             p: acc.p + (+i.protein || 0),
@@ -4951,24 +5934,42 @@ function NutritionTab({ settings, bodycomp, workouts, nutrition, setNutrition, c
             f: acc.f + (+i.fat || 0),
           }), { cal: 0, p: 0, c: 0, f: 0 });
           return (
-            <Card key={date} style={{ padding: 12 }}>
+            <Card key={date} style={{ padding: 12, ...staggerStyle(gi) }}>
               <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
                 <div style={{ fontSize: 13, fontWeight: 700, color: theme.text }}>{fmtDate(date)}</div>
-                <div style={{ fontSize: 12, color: theme.run, fontWeight: 700 }}>{totals.cal} kcal</div>
+                <div style={{ fontSize: 12, color: theme.run, fontWeight: 700 }}>{mealCategoryCount(items)} {t("끼니", "meals")} · {totals.cal} kcal</div>
               </div>
               <div style={{ fontSize: 12, color: theme.textDim, marginBottom: 8 }}>
                 {t("단백질", "Protein")} {totals.p}g · {t("탄수", "Carbs")} {totals.c}g · {t("지방", "Fat")} {totals.f}g
               </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                {items.map((i) => (
-                  <div key={i.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12, borderTop: `1px solid ${theme.border}`, paddingTop: 6 }}>
-                    <span style={{ color: theme.textDim }}>{i.meal || t("기록", "Entry")} · {i.calories}kcal</span>
-                    <div style={{ display: "flex", alignItems: "center" }}>
-                      <IconBtn onClick={() => startEdit(i)}><Pencil size={13} /></IconBtn>
-                      <IconBtn danger onClick={() => remove(i.id)}><Trash2 size={13} /></IconBtn>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {groupedNutritionItems(items).map(([cat, catItems]) => {
+                  const catTotals = catItems.reduce((acc, i) => ({
+                    cal: acc.cal + (+i.calories || 0),
+                    p: acc.p + (+i.protein || 0),
+                    c: acc.c + (+i.carbs || 0),
+                    f: acc.f + (+i.fat || 0),
+                  }), { cal: 0, p: 0, c: 0, f: 0 });
+                  return (
+                    <div key={cat} style={{ borderTop: `1px solid ${theme.border}`, paddingTop: 8 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 5 }}>
+                        <span style={{ fontSize: 12.5, fontWeight: 800, color: theme.text }}>{mealCategoryLabel(cat, t)}</span>
+                        <span style={{ fontSize: 11.5, color: theme.textFaint, fontFamily: MONO_FONT_STACK }}>{catItems.length} {t("개", "items")} · {Math.round(catTotals.cal)}kcal</span>
+                      </div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                        {catItems.map((i) => (
+                          <div key={i.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12, padding: "3px 0" }}>
+                            <span style={{ color: theme.textDim }}>{i.meal || t("이름 없는 아이템", "Unnamed item")} · {i.calories}kcal</span>
+                            <div style={{ display: "flex", alignItems: "center" }}>
+                              <IconBtn onClick={() => startEdit(i)}><Pencil size={13} /></IconBtn>
+                              <IconBtn danger onClick={() => remove(i.id)}><Trash2 size={13} /></IconBtn>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </Card>
           );
@@ -4983,20 +5984,16 @@ function NutritionTab({ settings, bodycomp, workouts, nutrition, setNutrition, c
    BODY COMP TAB
 --------------------------------------------------------- */
 function BodyCompTab({ bodycomp, setBodycomp }) {
-  const { t } = useLang();
+  const { t, en } = useLang();
   const theme = useTheme();
-  const [form, setForm] = useState({ date: todayStr(), weight: "", bodyfat: "", bodyfatSource: "manual", bodyfatConfidence: "high", muscleMass: "", condition: "fasted" });
+  const [form, setForm] = useState({ date: todayStr(), weight: "", bodyfat: "", muscleMass: "", condition: "fasted" });
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
 
   const save = () => {
     if (!form.weight) return;
-    const hasBodyfat = form.bodyfat !== "" && form.bodyfat != null;
-    const bodyfatSource = hasBodyfat ? (form.bodyfatSource || "manual") : "none";
     const entryData = {
-      date: form.date, weight: +form.weight, bodyfat: hasBodyfat ? +form.bodyfat : null,
-      bodyfatSource,
-      bodyfatConfidence: hasBodyfat ? (form.bodyfatConfidence || (bodyfatSource === "visual_estimate" ? "low" : "high")) : "none",
+      date: form.date, weight: +form.weight, bodyfat: form.bodyfat ? +form.bodyfat : null,
       muscleMass: form.muscleMass ? +form.muscleMass : null, condition: form.condition,
     };
     if (editingId) {
@@ -5004,15 +6001,13 @@ function BodyCompTab({ bodycomp, setBodycomp }) {
     } else {
       setBodycomp([{ id: uid(), ...entryData }, ...bodycomp]);
     }
-    setForm({ date: todayStr(), weight: "", bodyfat: "", bodyfatSource: "manual", bodyfatConfidence: "high", muscleMass: "", condition: "fasted" });
+    setForm({ date: todayStr(), weight: "", bodyfat: "", muscleMass: "", condition: "fasted" });
     setEditingId(null);
     setShowForm(false);
   };
   const startEdit = (entry) => {
     setForm({
       date: entry.date, weight: String(entry.weight), bodyfat: entry.bodyfat != null ? String(entry.bodyfat) : "",
-      bodyfatSource: entry.bodyfatSource || (entry.bodyfat != null ? "manual" : "none"),
-      bodyfatConfidence: entry.bodyfatConfidence || (entry.bodyfatSource === "visual_estimate" ? "low" : "high"),
       muscleMass: entry.muscleMass != null ? String(entry.muscleMass) : "", condition: entry.condition || "fasted",
     });
     setEditingId(entry.id);
@@ -5025,7 +6020,11 @@ function BodyCompTab({ bodycomp, setBodycomp }) {
     setConfirmDeleteId(null);
   };
 
-  const chartData = [...bodycomp].sort((a, b) => a.date.localeCompare(b.date)).map((b) => ({
+  const newestByDate = new Map();
+  bodycomp.forEach((entry) => {
+    if (entry?.date && !newestByDate.has(entry.date)) newestByDate.set(entry.date, entry);
+  });
+  const chartData = [...newestByDate.values()].sort((a, b) => a.date.localeCompare(b.date)).map((b) => ({
     date: fmtDate(b.date), weight: b.weight, bodyfat: b.bodyfat,
   }));
   const sorted = [...bodycomp].sort((a, b) => b.date.localeCompare(a.date));
@@ -5048,30 +6047,8 @@ function BodyCompTab({ bodycomp, setBodycomp }) {
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
               <Field label={t("날짜", "Date")}><TextInput type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} /></Field>
               <Field label={t("체중(kg)", "Weight (kg)")}><TextInput type="number" step="0.1" value={form.weight} onChange={(e) => setForm({ ...form, weight: e.target.value })} placeholder="102.9" /></Field>
-              <Field label={t("체지방(%, 선택)", "Body Fat % (optional)")}><TextInput type="number" step="0.1" value={form.bodyfat} onChange={(e) => setForm({ ...form, bodyfat: e.target.value, bodyfatSource: e.target.value ? "manual" : "none", bodyfatConfidence: e.target.value ? "high" : "none" })} placeholder="30.5" /></Field>
+              <Field label={t("체지방(%, 선택)", "Body Fat % (optional)")}><TextInput type="number" step="0.1" value={form.bodyfat} onChange={(e) => setForm({ ...form, bodyfat: e.target.value })} placeholder="30.5" /></Field>
               <Field label={t("근육량(kg, 선택)", "Muscle Mass (kg, optional)")}><TextInput type="number" step="0.1" value={form.muscleMass} onChange={(e) => setForm({ ...form, muscleMass: e.target.value })} placeholder="38.2" /></Field>
-            </div>
-            <div style={{ marginBottom: 10 }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-                <div style={{ fontSize: 12, color: theme.textFaint, letterSpacing: "0.04em" }}>
-                  {t("체지방을 모를 때", "If you don't know body fat")}
-                </div>
-                {form.bodyfat && <span style={{ fontSize: 11, color: theme.textFaint }}>{getBodyFatSourceMeta(form.bodyfatSource, t).label}</span>}
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 8 }}>
-                <button type="button" onClick={() => setForm({ ...form, bodyfatSource: "manual", bodyfatConfidence: "high" })}
-                  style={{ padding: 8, borderRadius: 12, border: `1px solid ${form.bodyfatSource === "manual" ? theme.lift : theme.border}`, background: form.bodyfatSource === "manual" ? tint(theme.lift, 0.14) : "transparent", color: theme.text, fontSize: 12, fontWeight: 750, cursor: "pointer" }}>
-                  {t("직접 입력", "Manual")}
-                </button>
-                <button type="button" onClick={() => setForm({ ...form, bodyfat: "", bodyfatSource: "none", bodyfatConfidence: "none" })}
-                  style={{ padding: 8, borderRadius: 12, border: `1px solid ${form.bodyfatSource === "none" ? theme.textFaint : theme.border}`, background: form.bodyfatSource === "none" ? tint(theme.textFaint, 0.10) : "transparent", color: theme.text, fontSize: 12, fontWeight: 750, cursor: "pointer" }}>
-                  {t("건너뛰기", "Skip")}
-                </button>
-              </div>
-              <BodyFatEstimateSelector value={form.bodyfatSource === "visual_estimate" ? form.bodyfat : ""} onSelect={(value) => setForm({ ...form, bodyfat: String(value), bodyfatSource: "visual_estimate", bodyfatConfidence: "low" })} compact />
-              <div style={{ fontSize: 11, color: theme.textFaint, lineHeight: 1.45, marginTop: 7 }}>
-                {t("눈대중 값은 정확한 측정이 아니라 칼로리 계산을 시작하기 위한 대략적인 기준점입니다.", "Visual estimates are not precise measurements — just a starting point for calorie planning.")}
-              </div>
             </div>
             <div style={{ marginBottom: 10 }}>
               <div style={{ fontSize: 12, color: theme.textFaint, letterSpacing: "0.04em", marginBottom: 6 }}>
@@ -5086,7 +6063,7 @@ function BodyCompTab({ bodycomp, setBodycomp }) {
                 ].map((opt) => (
                   <button key={opt.id} onClick={() => setForm({ ...form, condition: opt.id })}
                     style={{
-                      flex: 1, padding: "6px 2px", borderRadius: 12, fontSize: 12, cursor: "pointer",
+                      flex: 1, padding: "6px 2px", borderRadius: 2, fontSize: 12, cursor: "pointer",
                       border: `1px solid ${form.condition === opt.id ? theme.lift : theme.border}`,
                       background: form.condition === opt.id ? tint(theme.lift, 0.16) : "transparent",
                       color: theme.text, fontWeight: form.condition === opt.id ? 700 : 500,
@@ -5103,14 +6080,14 @@ function BodyCompTab({ bodycomp, setBodycomp }) {
 
       {chartData.length >= 2 && (
         <Card>
-          <SectionTitle>{t("체중 · 체지방 추이", "Weight · Body Fat Trend")}</SectionTitle>
+          <SectionTitle>{en("체중 · 체지방 추이", "Weight · Body Fat Trend")}</SectionTitle>
           <ResponsiveContainer width="100%" height={200}>
             <LineChart data={chartData} margin={{ left: -20, right: 10 }}>
               <CartesianGrid stroke={theme.border} strokeDasharray="3 3" />
               <XAxis dataKey="date" stroke={theme.textFaint} tick={{ fontSize: 10 }} />
               <YAxis yAxisId="left" stroke={theme.lift} tick={{ fontSize: 10 }} domain={["auto", "auto"]} />
               <YAxis yAxisId="right" orientation="right" stroke={theme.run} tick={{ fontSize: 10 }} domain={["auto", "auto"]} />
-              <Tooltip contentStyle={{ background: theme.surfaceRaised, border: `1px solid ${theme.border}`, borderRadius: 12, fontSize: 12 }} />
+              <Tooltip contentStyle={{ background: theme.surfaceRaised, border: `1px solid ${theme.border}`, borderRadius: 2, fontSize: 12 }} />
               <Legend wrapperStyle={{ fontSize: 11 }} />
               <Line yAxisId="left" type="monotone" dataKey="weight" name={t("체중", "Weight")} stroke={theme.lift} strokeWidth={2} dot={{ r: 2 }} connectNulls />
               <Line yAxisId="right" type="monotone" dataKey="bodyfat" name={t("체지방", "Body Fat")} stroke={theme.run} strokeWidth={2} dot={{ r: 2 }} connectNulls />
@@ -5124,7 +6101,7 @@ function BodyCompTab({ bodycomp, setBodycomp }) {
         {sorted.map((b) => (
           <Card key={b.id} style={{ padding: 12, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <div>
-              <div style={{ fontSize: 14, fontWeight: 700, color: theme.text }}>{b.weight}kg{b.bodyfat ? <> · {b.bodyfat}%<BodyFatSourceBadge source={b.bodyfatSource} /></> : ""}{b.muscleMass ? ` · ${t("근육", "SM")} ${b.muscleMass}kg` : ""}</div>
+              <div style={{ fontSize: 14, fontWeight: 700, color: theme.text }}>{b.weight}kg{b.bodyfat ? ` · ${b.bodyfat}%` : ""}{b.muscleMass ? ` · ${t("근육", "SM")} ${b.muscleMass}kg` : ""}</div>
               <div style={{ fontSize: 12, color: theme.textDim }}>{fmtDate(b.date)}</div>
             </div>
             <div style={{ display: "flex", alignItems: "center" }}>
@@ -5147,7 +6124,7 @@ function BodyCompTab({ bodycomp, setBodycomp }) {
 // visual/interaction language instead of two separately-evolved designs.
 function ProposalCard({ title, badge, eligible, children, ineligibleNote, onAccept, acceptLabel, onDismiss, dismissLabel }) {
   const theme = useTheme();
-  const { t } = useLang();
+  const { t, en } = useLang();
   const [expanded, setExpanded] = useState(false);
   return (
     <Card style={eligible ? { borderColor: theme.lift } : undefined}>
@@ -5155,7 +6132,7 @@ function ProposalCard({ title, badge, eligible, children, ineligibleNote, onAcce
         <SectionTitle right={
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
             {eligible && (
-              <span style={{ fontSize: 12, fontWeight: 700, color: theme.lift, background: tint(theme.lift, 0.16), padding: "2px 7px", borderRadius: 12, fontStyle: "normal", fontFamily: BODY_FONT_STACK }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: theme.lift, background: tint(theme.lift, 0.16), padding: "2px 7px", borderRadius: 2, fontStyle: "normal", fontFamily: BODY_FONT_STACK }}>
                 {t("제안 있음", "Proposal ready")}
               </span>
             )}
@@ -5173,7 +6150,7 @@ function ProposalCard({ title, badge, eligible, children, ineligibleNote, onAcce
             <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
               <div style={{ flex: 1 }}><PrimaryButton onClick={onAccept}>{acceptLabel}</PrimaryButton></div>
               {onDismiss && (
-                <button onClick={onDismiss} style={{ flex: 1, background: "none", border: `1px solid ${theme.border}`, borderRadius: 12, color: theme.textDim, cursor: "pointer", fontSize: 13 }}>
+                <button onClick={onDismiss} style={{ flex: 1, background: "none", border: `1px solid ${theme.border}`, borderRadius: 2, color: theme.textDim, cursor: "pointer", fontSize: 13 }}>
                   {dismissLabel}
                 </button>
               )}
@@ -5188,15 +6165,15 @@ function ProposalCard({ title, badge, eligible, children, ineligibleNote, onAcce
 }
 
 function TdeeTab({ settings, onSaveSettings, bodycomp, nutrition, workouts, weekPlan, tdeeHistory, setTdeeHistory, recentAvgSteps }) {
-  const { t } = useLang();
+  const { t, en } = useLang();
   const theme = useTheme();
   const [windowDays, setWindowDays] = useState(14);
 
   const sorted = [...bodycomp].sort((a, b) => a.date.localeCompare(b.date));
   const currentWeight = sorted[sorted.length - 1]?.weight ?? (settings.startWeight || null);
-  const currentBF = sorted[sorted.length - 1]?.bodyfat ?? null;
+  const currentBF = sorted[sorted.length - 1]?.bodyfat ?? (settings.startBF || null);
 
-  const initial = useMemo(() => computeInitialTdee(settings, currentWeight, workouts, recentAvgSteps), [settings, currentWeight, workouts, recentAvgSteps]);
+  const initial = useMemo(() => computeInitialTdee(settings, currentWeight, workouts, recentAvgSteps, currentBF), [settings, currentWeight, workouts, recentAvgSteps, currentBF]);
   const calib = useMemo(
     () => (initial ? calibrateTdee(initial.tdee, bodycomp, nutrition, windowDays) : { eligible: false }),
     [initial, bodycomp, nutrition, windowDays]
@@ -5238,11 +6215,14 @@ function TdeeTab({ settings, onSaveSettings, bodycomp, nutrition, workouts, week
   };
 
   const [justSaved, setJustSaved] = useState(false);
+  const justSavedTimerRef = useRef(null);
+  useEffect(() => () => { if (justSavedTimerRef.current) clearTimeout(justSavedTimerRef.current); }, []);
   const saveSnapshot = () => {
     if (!roundedTdee) return;
     setTdeeHistory([...tdeeHistory, { id: uid(), date: todayStr(), value: roundedTdee }]);
     setJustSaved(true);
-    setTimeout(() => setJustSaved(false), 1800);
+    if (justSavedTimerRef.current) clearTimeout(justSavedTimerRef.current);
+    justSavedTimerRef.current = setTimeout(() => setJustSaved(false), 1800);
   };
 
   const chartData = [...tdeeHistory].sort((a, b) => a.date.localeCompare(b.date)).map((h) => ({ date: fmtDate(h.date), maintenance: h.value }));
@@ -5254,7 +6234,7 @@ function TdeeTab({ settings, onSaveSettings, bodycomp, nutrition, workouts, week
   ];
   const targets = roundedTdee && currentWeight ? rateTiers.map(({ key, frac, label }) => {
     const target = dailyTargetForRate(roundedTdee, currentWeight, frac, initial?.bmr, settings.sex);
-    const macros = macrosFor(target, currentWeight, settings.sex, currentBF);
+    const macros = macrosFor(target, currentWeight, settings.sex, currentBF, settings.carbPercent ?? null);
     return { key, label, target, macros, frac };
   }) : null;
 
@@ -5271,14 +6251,14 @@ function TdeeTab({ settings, onSaveSettings, bodycomp, nutrition, workouts, week
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <Card>
-        <SectionTitle right={<span style={{ fontSize: 12, color: theme.textFaint }}>{settings.acceptedTdee ? t("승인된 보정 적용 중", "Accepted calibration active") : (initial ? t("DietEngine 기반 (모델)", "DietEngine-based (model)") : t("실측 기반", "Observed-only"))}</span>}>
+        <SectionTitle right={<span style={{ fontSize: 12, color: theme.textFaint }}>{settings.acceptedTdee ? t("승인된 보정 적용 중", "Accepted calibration active") : (initial ? (initial.bmrMethod === "mifflin" ? t("프로필 기반 모델", "Profile-based model") : initial.bmrMethod === "katch_mcardle" ? t("체지방 기반 모델", "Body-fat-based model") : t("체중 기반 임시 모델", "Weight-based fallback")) : t("실측 기반", "Observed-only"))}</span>}>
           {t("유지 칼로리 추정", "Maintenance Calorie Estimate")}
         </SectionTitle>
         <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
           {[7, 14, 28].map((d) => (
             <button key={d} onClick={() => setWindowDays(d)}
               style={{
-                flex: 1, padding: 8, borderRadius: 12, fontSize: 12,
+                flex: 1, padding: 8, borderRadius: 2, fontSize: 12,
                 border: `1px solid ${windowDays === d ? theme.lift : theme.border}`,
                 background: windowDays === d ? tint(theme.lift, 0.16) : "transparent",
                 color: theme.text, cursor: "pointer",
@@ -5373,7 +6353,7 @@ function TdeeTab({ settings, onSaveSettings, bodycomp, nutrition, workouts, week
 
       {warnings.length > 0 && (
         <Card style={{ borderColor: theme.danger }}>
-          <SectionTitle>{t("주의사항 (표준 기준)", "Notes (standard tier)")}</SectionTitle>
+          <SectionTitle>{en("주의사항 (표준 기준)", "Notes (standard tier)")}</SectionTitle>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {warnings.map((w, i) => (
               <div key={i} style={{ fontSize: 12, color: theme.danger, lineHeight: 1.5, fontWeight: w.severity === "review" ? 700 : 400 }}>
@@ -5386,13 +6366,13 @@ function TdeeTab({ settings, onSaveSettings, bodycomp, nutrition, workouts, week
 
       {chartData.length >= 2 && (
         <Card>
-          <SectionTitle>{t("유지 칼로리 변화 추이", "Maintenance Calorie Trend")}</SectionTitle>
+          <SectionTitle>{en("유지 칼로리 변화 추이", "Maintenance Calorie Trend")}</SectionTitle>
           <ResponsiveContainer width="100%" height={180}>
             <LineChart data={chartData} margin={{ left: -20, right: 10 }}>
               <CartesianGrid stroke={theme.border} strokeDasharray="3 3" />
               <XAxis dataKey="date" stroke={theme.textFaint} tick={{ fontSize: 10 }} />
               <YAxis stroke={theme.textFaint} tick={{ fontSize: 10 }} domain={["auto", "auto"]} />
-              <Tooltip contentStyle={{ background: theme.surfaceRaised, border: `1px solid ${theme.border}`, borderRadius: 12, fontSize: 12 }} />
+              <Tooltip contentStyle={{ background: theme.surfaceRaised, border: `1px solid ${theme.border}`, borderRadius: 2, fontSize: 12 }} />
               <Line type="monotone" dataKey="maintenance" name={t("유지칼로리", "Maintenance")} stroke={theme.ring} strokeWidth={2} dot={{ r: 3 }} />
             </LineChart>
           </ResponsiveContainer>
@@ -5404,7 +6384,7 @@ function TdeeTab({ settings, onSaveSettings, bodycomp, nutrition, workouts, week
 
 function ActivityHeatmap({ workouts, nutrition, bodycomp }) {
   const theme = useTheme();
-  const { t } = useLang();
+  const { t, en } = useLang();
   const counts = useMemo(() => {
     const map = {};
     const bump = (date) => { if (date) map[date] = (map[date] || 0) + 1; };
@@ -5437,7 +6417,7 @@ function ActivityHeatmap({ workouts, nutrition, bodycomp }) {
         {weeks.map((week, wi) => (
           <div key={wi} style={{ display: "flex", flexDirection: "column", gap: 3 }}>
             {week.map((c) => (
-              <div key={c.date} title={`${c.date}: ${c.count}`} style={{ width: 10, height: 10, borderRadius: 12, background: levelColor(c.count) }} />
+              <div key={c.date} title={`${c.date}: ${c.count}`} style={{ width: 10, height: 10, borderRadius: 2, background: levelColor(c.count) }} />
             ))}
           </div>
         ))}
@@ -5460,40 +6440,107 @@ function SettingsSectionLabel({ children }) {
   );
 }
 
-function ProgressTab({ settings, onSaveSettings, bodycomp, setBodycomp, nutrition, workouts, weekPlan, tdeeHistory, setTdeeHistory, recentAvgSteps }) {
-  const { t } = useLang(); const theme = useTheme(); const [section, setSection] = useState("body");
-  const items = [{ id: "body", label: t("체성분", "Body") }, { id: "energy", label: t("유지칼로리", "Energy") }];
-  return <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-    <ScreenHeader
-      eyebrow={t("분석", "Analytics")}
-      title={t("PROGRESS", "PROGRESS")}
-      subtitle={t("몸 변화와 에너지 추세를 한 곳에서 확인하세요", "Your body and energy trends in one place")}
-      color={theme.progress || theme.run}
-    />
-    <Card variant="feature" accent={theme.progress || theme.run}>
-      <SectionTitle>{t("한눈에 보기", "At a glance")}</SectionTitle>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-        <MiniMetric label={t("체중", "Weight")} value={getLatestBodyComp(bodycomp, settings).weight ? `${Number(getLatestBodyComp(bodycomp, settings).weight).toFixed(1)}kg` : "—"} sub={t("최신 기록", "latest")} color={theme.act || theme.lift} icon={<Scale size={14} />} />
-        <MiniMetric label={t("걸음", "Steps")} value={recentAvgSteps ? Math.round(recentAvgSteps).toLocaleString() : "—"} sub={t("최근 평균", "recent avg")} color={theme.progress || theme.run} icon={<Footprints size={14} />} />
-        <MiniMetric label={t("운동", "Training")} value={`${workouts.filter(w => w.date >= localDateStr(new Date(Date.now() - 7*86400000))).length}`} sub={t("최근 7일", "last 7 days")} color={theme.eat || theme.lift} icon={<Dumbbell size={14} />} />
-        <MiniMetric label={t("식단", "Meals")} value={`${nutrition.filter(n => n.date === todayStr()).length}`} sub={t("오늘 기록", "today")} color={theme.plan || theme.ring} icon={<Utensils size={14} />} />
+// Minimal editorial sparkline — a bare trend line with no axes/labels,
+// meant to sit under a mono label + big current value in a stat cluster.
+function Sparkline({ data, width = 96, height = 30, color, down }) {
+  const theme = useTheme();
+  const stroke = color || theme.lift;
+  if (!data || data.length < 2) {
+    return <div style={{ height, display: "flex", alignItems: "center" }}><div style={{ height: 1, width: "100%", background: theme.border }} /></div>;
+  }
+  const min = Math.min(...data), max = Math.max(...data);
+  const range = max - min || 1;
+  const n = data.length;
+  const pts = data.map((v, i) => {
+    const x = (i / (n - 1)) * width;
+    const y = height - ((v - min) / range) * (height - 4) - 2;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" ");
+  const lastX = width, lastY = height - ((data[n - 1] - min) / range) * (height - 4) - 2;
+  return (
+    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" style={{ display: "block", overflow: "visible" }}>
+      <polyline points={pts} fill="none" stroke={stroke} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx={lastX} cy={lastY} r="2" fill={stroke} />
+    </svg>
+  );
+}
+
+function TrendStat({ label, value, unit, delta, deltaUnit, data, color, positiveIsGood }) {
+  const theme = useTheme();
+  const hasDelta = delta != null && !Number.isNaN(delta) && Math.abs(delta) > 0.001;
+  // For weight/bodyfat in a cut, down is good → green; up is bad → red. We
+  // don't over-signal: just a subtle arrow + neutral tone unless clearly good/bad.
+  const arrow = hasDelta ? (delta < 0 ? "↓" : "↑") : "";
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8, minWidth: 0 }}>
+      <div style={{ fontSize: 9.5, fontFamily: MONO_FONT_STACK, letterSpacing: "0.12em", textTransform: "uppercase", color: theme.textFaint, whiteSpace: "nowrap" }}>{label} {arrow}</div>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 3 }}>
+        <span style={{ fontSize: 22, fontWeight: 800, color: theme.text, fontVariantNumeric: "tabular-nums", lineHeight: 1, letterSpacing: "-0.01em" }}>{value}</span>
+        {unit && <span style={{ fontSize: 10, color: theme.textFaint, fontFamily: MONO_FONT_STACK }}>{unit}</span>}
       </div>
-    </Card>
-    <div style={{ display: "flex", padding: 4, gap: 4, background: `linear-gradient(135deg, ${tint(theme.progress || theme.run, theme.isDark ? 0.16 : 0.10)}, ${theme.surfaceRaised})`, border: `1px solid ${tint(theme.progress || theme.run, 0.26)}`, borderRadius: 14 }}>{items.map((item) => <button key={item.id} onClick={() => setSection(item.id)} style={{ flex: 1, minHeight: 40, border: "none", borderRadius: 12, cursor: "pointer", color: section === item.id ? (theme.isDark ? "#071827" : theme.text) : theme.textDim, background: section === item.id ? (section === "body" ? (theme.progress || theme.run) : (theme.plan || theme.ring)) : "transparent", fontSize: 13, fontWeight: section === item.id ? 850 : 600, boxShadow: section === item.id ? cardShadow(theme, 0.08) : "none" }}>{item.label}</button>)}</div>
+      <Sparkline data={data} color={color || theme.lift} />
+      <div style={{ fontSize: 9.5, fontFamily: MONO_FONT_STACK, color: theme.textFaint, letterSpacing: "0.04em", whiteSpace: "nowrap" }}>
+        {hasDelta ? `${delta > 0 ? "+" : ""}${delta}${deltaUnit || ""} / 30d` : "—"}
+      </div>
+    </div>
+  );
+}
+
+function ProgressTab({ settings, onSaveSettings, bodycomp, setBodycomp, nutrition, workouts, weekPlan, tdeeHistory, setTdeeHistory, recentAvgSteps }) {
+  const { t, en } = useLang(); const theme = useTheme(); const [section, setSection] = useState("body");
+  const items = [{ id: "body", label: t("체성분", "Body") }, { id: "energy", label: t("유지칼로리", "Energy") }];
+
+  // Trend series for the sparkline cluster
+  const trends = useMemo(() => {
+    const sorted = [...bodycomp].sort((a, b) => String(a.date).localeCompare(String(b.date)));
+    const wSeries = sorted.filter((b) => b.weight != null).map((b) => ({ date: b.date, v: Number(b.weight) }));
+    const bfSeries = sorted.filter((b) => b.bodyfat != null).map((b) => ({ date: b.date, v: Number(b.bodyfat) }));
+    const tSeries = [...tdeeHistory].sort((a, b) => String(a.date).localeCompare(String(b.date))).map((h) => ({ date: h.date, v: Number(h.value) }));
+    const cutoff = localDateStr(new Date(Date.now() - 30 * 86400000));
+    const deltaOf = (series) => {
+      if (series.length < 2) return null;
+      const recent = series.filter((p) => p.date >= cutoff);
+      const base = recent.length >= 2 ? recent[0].v : series[0].v;
+      return Math.round((series[series.length - 1].v - base) * 10) / 10;
+    };
+    return {
+      weight: { series: wSeries.map((p) => p.v), last: wSeries.at(-1)?.v, delta: deltaOf(wSeries) },
+      bodyfat: { series: bfSeries.map((p) => p.v), last: bfSeries.at(-1)?.v, delta: deltaOf(bfSeries) },
+      tdee: { series: tSeries.map((p) => p.v), last: tSeries.at(-1)?.v, delta: deltaOf(tSeries) },
+    };
+  }, [bodycomp, tdeeHistory]);
+
+  return <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+    <ScreenHeader
+      eyebrow="Analytics"
+      title="Progress"
+      subtitle={t("몸 변화와 에너지 추세를 한 곳에서 확인하세요", "Your body and energy trends in one place")}
+    />
+
+    {/* TREND CLUSTER — instrument panel */}
+    <div>
+      <div style={{ fontSize: 10.5, fontFamily: MONO_FONT_STACK, letterSpacing: "0.16em", textTransform: "uppercase", color: theme.textFaint, marginBottom: 14 }}>{en("추세 · 최근 30일", "Trends · Last 30 Days")}</div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 14 }}>
+        <TrendStat label={en("체중", "Weight")} value={trends.weight.last != null ? trends.weight.last.toFixed(1) : "—"} unit={trends.weight.last != null ? "kg" : ""} delta={trends.weight.delta} deltaUnit="kg" data={trends.weight.series} color={theme.lift} />
+        <TrendStat label={en("체지방", "Body Fat")} value={trends.bodyfat.last != null ? trends.bodyfat.last.toFixed(1) : "—"} unit={trends.bodyfat.last != null ? "%" : ""} delta={trends.bodyfat.delta} deltaUnit="%" data={trends.bodyfat.series} color={theme.text} />
+        <TrendStat label={en("유지칼로리", "TDEE")} value={trends.tdee.last != null ? Math.round(trends.tdee.last).toLocaleString() : "—"} unit="" delta={trends.tdee.delta != null ? Math.round(trends.tdee.delta) : null} deltaUnit="" data={trends.tdee.series} color={theme.textDim} />
+      </div>
+      <div style={{ marginTop: 16 }}><RuleLine /></div>
+    </div>
+
+    <div style={{ display: "flex", gap: 8 }}>{items.map((item) => <button key={item.id} onClick={() => setSection(item.id)} style={{ flex: 1, minHeight: 44, border: `1px solid ${section === item.id ? theme.lift : theme.border}`, borderRadius: 2, cursor: "pointer", color: section === item.id ? (theme.heroText || "#0A0A0A") : theme.textDim, background: section === item.id ? theme.lift : "transparent", fontSize: 11, fontWeight: 700, fontFamily: MONO_FONT_STACK, letterSpacing: "0.1em", textTransform: "uppercase" }}>{item.label}</button>)}</div>
     {section === "body" ? <BodyCompTab bodycomp={bodycomp} setBodycomp={setBodycomp} /> : <TdeeTab settings={settings} onSaveSettings={onSaveSettings} bodycomp={bodycomp} nutrition={nutrition} workouts={workouts} weekPlan={weekPlan} tdeeHistory={tdeeHistory} setTdeeHistory={setTdeeHistory} recentAvgSteps={recentAvgSteps} />}
   </div>;
 }
 
-function SettingsTab({ settings, onSaveSettings, workouts, nutrition, bodycomp, programs, onShowIntro, onShowPatchNotes }) {
-  const { lang, t } = useLang();
+function SettingsTab({ settings, onSaveSettings, workouts, nutrition, bodycomp, programs, onShowIntro }) {
+  const { lang, t, en } = useLang();
   const theme = useTheme();
   const [profileDraft, setProfileDraft] = useState({
     userName: settings.userName || "USERNAME",
     ageYears: settings.ageYears || "",
     heightCm: settings.heightCm || "",
     startWeight: settings.startWeight || "",
-    startBF: settings.startBF || "",
-    startBFSource: settings.startBFSource || (settings.startBF ? "manual" : "none"),
     startDate: settings.startDate || todayStr(),
     sex: settings.sex || "male",
     goalMode: settings.goalMode || "cut",
@@ -5504,13 +6551,50 @@ function SettingsTab({ settings, onSaveSettings, workouts, nutrition, bodycomp, 
     ageYears: settings.ageYears || "",
     heightCm: settings.heightCm || "",
     startWeight: settings.startWeight || "",
-    startBF: settings.startBF || "",
-    startBFSource: settings.startBFSource || (settings.startBF ? "manual" : "none"),
     startDate: settings.startDate || todayStr(),
     sex: settings.sex || "male",
     goalMode: settings.goalMode || "cut",
     activityLevel: settings.activityLevel || "low",
-  }), [settings.userName, settings.ageYears, settings.heightCm, settings.startWeight, settings.startBF, settings.startBFSource, settings.startDate, settings.sex, settings.goalMode, settings.activityLevel]);
+  }), [settings.userName, settings.ageYears, settings.heightCm, settings.startWeight, settings.startDate, settings.sex, settings.goalMode, settings.activityLevel]);
+
+  const backupFileInputRef = useRef(null);
+  const [backupText, setBackupText] = useState("");
+  const [backupFilename, setBackupFilename] = useState("");
+  const exportJsonBackup = async () => {
+    try {
+      const payload = await collectBackupData();
+      const date = new Date().toISOString().slice(0, 10);
+      const filename = `hybrid-log-backup-${date}.json`;
+      const text = JSON.stringify(payload, null, 2);
+      setBackupFilename(filename);
+      setBackupText(text);
+      const sharedOrDownloaded = await shareJsonBackup(text, filename);
+      if (!sharedOrDownloaded) {
+        await copyTextToClipboard(text);
+      }
+    } catch (e) {
+      window.alert(t("백업 파일을 만들지 못했습니다.", "Could not create the backup file."));
+    }
+  };
+  const importJsonBackup = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    const ok = window.confirm(t(
+      "이 백업을 가져오면 현재 앱 데이터가 백업 파일 내용으로 교체됩니다. 계속할까요?",
+      "Importing this backup will replace the current app data with the file contents. Continue?"
+    ));
+    if (!ok) return;
+    try {
+      const text = await file.text();
+      const payload = JSON.parse(text);
+      await restoreBackupPayload(payload);
+      window.alert(t("백업을 복원했습니다. 앱을 다시 시작합니다.", "Backup restored. The app will restart now."));
+      window.location.reload();
+    } catch (err) {
+      window.alert(t("백업 파일을 읽지 못했습니다. 올바른 Hybrid Log JSON인지 확인해주세요.", "Could not read this backup. Please check that it is a valid Hybrid Log JSON file."));
+    }
+  };
 
   const saveProfile = () => onSaveSettings({
     ...settings,
@@ -5518,9 +6602,6 @@ function SettingsTab({ settings, onSaveSettings, workouts, nutrition, bodycomp, 
     ageYears: Number(profileDraft.ageYears) || 0,
     heightCm: Number(profileDraft.heightCm) || 0,
     startWeight: Number(profileDraft.startWeight) || 0,
-    startBF: Number(profileDraft.startBF) || 0,
-    startBFSource: profileDraft.startBF ? (profileDraft.startBFSource || "manual") : "none",
-    startBFConfidence: profileDraft.startBF ? (profileDraft.startBFSource === "visual_estimate" ? "low" : "high") : "none",
     startDate: profileDraft.startDate || todayStr(),
     sex: profileDraft.sex || "male",
     goalMode: profileDraft.goalMode || "cut",
@@ -5533,15 +6614,14 @@ function SettingsTab({ settings, onSaveSettings, workouts, nutrition, bodycomp, 
         <div style={{ fontSize: 18, fontWeight: 800, color: theme.text }}>{t("설정", "Settings")}</div>
         <div style={{ fontSize: 12, color: theme.textDim, marginTop: 4 }}>{t("앱 동작과 개인 환경을 관리합니다.", "Manage app behaviour and your personal setup.")}</div>
       </div>
-      <SettingsSectionLabel>{t("일반", "General")}</SettingsSectionLabel>
+      <SettingsSectionLabel>{en("일반", "General")}</SettingsSectionLabel>
       <Card>
-        <SectionTitle>{t("기본 프로필", "Profile Basics")}</SectionTitle>
+        <SectionTitle>{en("기본 프로필", "Profile Basics")}</SectionTitle>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
           <Field label={t("이름", "Name")}><TextInput value={profileDraft.userName} onChange={(e) => setProfileDraft({ ...profileDraft, userName: e.target.value })} /></Field>
           <Field label={t("나이", "Age")}><UnitInput type="number" inputMode="numeric" unit={t("세", "yr")} value={profileDraft.ageYears} onChange={(e) => setProfileDraft({ ...profileDraft, ageYears: e.target.value })} placeholder="23" /></Field>
           <Field label={t("키(cm)", "Height (cm)")}><UnitInput type="number" unit="cm" value={profileDraft.heightCm} onChange={(e) => setProfileDraft({ ...profileDraft, heightCm: e.target.value })} placeholder="175" /></Field>
           <Field label={t("시작 체중(kg)", "Starting weight (kg)")}><UnitInput type="number" step="0.1" unit="kg" value={profileDraft.startWeight} onChange={(e) => setProfileDraft({ ...profileDraft, startWeight: e.target.value })} placeholder="80" /></Field>
-          <Field label={t("시작 체지방(%, 선택)", "Starting body fat % (optional)")}><UnitInput type="number" step="0.1" unit="%" value={profileDraft.startBF} onChange={(e) => setProfileDraft({ ...profileDraft, startBF: e.target.value, startBFSource: e.target.value ? "manual" : "none" })} placeholder="22" /></Field>
           <Field label={t("시작 날짜", "Start date")}><TextInput type="date" value={profileDraft.startDate} onChange={(e) => setProfileDraft({ ...profileDraft, startDate: e.target.value })} /></Field>
           <Field label={t("성별", "Sex")}><Select value={profileDraft.sex} onChange={(e) => setProfileDraft({ ...profileDraft, sex: e.target.value })}><option value="male">{t("남성", "Male")}</option><option value="female">{t("여성", "Female")}</option></Select></Field>
           <Field label={t("목표", "Goal")}><Select value={profileDraft.goalMode} onChange={(e) => setProfileDraft({ ...profileDraft, goalMode: e.target.value })}><option value="cut">{t("감량", "Cut")}</option><option value="maintain">{t("유지", "Maintain")}</option><option value="gain">{t("증량", "Gain")}</option></Select></Field>
@@ -5554,11 +6634,11 @@ function SettingsTab({ settings, onSaveSettings, workouts, nutrition, bodycomp, 
       </Card>
 
       <Card>
-        <SectionTitle>{t("언어", "Language")}</SectionTitle>
+        <SectionTitle>{en("언어", "Language")}</SectionTitle>
         <div style={{ display: "flex", gap: 8 }}>
           <button onClick={() => onSaveSettings({ ...settings, language: "ko" })}
             style={{
-              flex: 1, padding: 10, borderRadius: 12, fontSize: 13, cursor: "pointer",
+              flex: 1, padding: 10, borderRadius: 2, fontSize: 13, cursor: "pointer",
               border: `1px solid ${lang === "ko" ? theme.lift : theme.border}`,
               background: lang === "ko" ? tint(theme.lift, 0.16) : "transparent", color: theme.text,
             }}>
@@ -5566,7 +6646,7 @@ function SettingsTab({ settings, onSaveSettings, workouts, nutrition, bodycomp, 
           </button>
           <button onClick={() => onSaveSettings({ ...settings, language: "en" })}
             style={{
-              flex: 1, padding: 10, borderRadius: 12, fontSize: 13, cursor: "pointer",
+              flex: 1, padding: 10, borderRadius: 2, fontSize: 13, cursor: "pointer",
               border: `1px solid ${lang === "en" ? theme.lift : theme.border}`,
               background: lang === "en" ? tint(theme.lift, 0.16) : "transparent", color: theme.text,
             }}>
@@ -5576,19 +6656,19 @@ function SettingsTab({ settings, onSaveSettings, workouts, nutrition, bodycomp, 
       </Card>
 
       <Card>
-        <SectionTitle>{t("테마", "Theme")}</SectionTitle>
+        <SectionTitle>{en("테마", "Theme")}</SectionTitle>
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {Object.entries(PALETTES).map(([id, p]) => {
             const active = (settings.colorPalette || DEFAULT_PALETTE) === id;
             return (
               <button key={id} onClick={() => onSaveSettings({ ...settings, colorPalette: id })}
                 style={{
-                  display: "flex", alignItems: "center", gap: 10, padding: 10, borderRadius: 12, cursor: "pointer",
+                  display: "flex", alignItems: "center", gap: 10, padding: 10, borderRadius: 2, cursor: "pointer",
                   border: `1px solid ${active ? theme.lift : theme.border}`,
                   background: active ? tint(theme.lift, 0.1) : "transparent",
                 }}>
                 <span style={{
-                  width: 26, height: 26, borderRadius: "50%", flexShrink: 0,
+                  width: 26, height: 26, borderRadius: 2, flexShrink: 0,
                   background: `linear-gradient(135deg, ${p.lift}, ${p.run})`,
                   border: `1px solid ${theme.border}`,
                 }} />
@@ -5600,9 +6680,9 @@ function SettingsTab({ settings, onSaveSettings, workouts, nutrition, bodycomp, 
         </div>
       </Card>
 
-      <SettingsSectionLabel>{t("자동화", "Automation")}</SettingsSectionLabel>
+      <SettingsSectionLabel>{en("자동화", "Automation")}</SettingsSectionLabel>
       <Card>
-        <SectionTitle>{t("활동 수준 자동 반영", "Activity Level Automation")}</SectionTitle>
+        <SectionTitle>{en("활동 수준 자동 반영", "Activity Level Automation")}</SectionTitle>
         <div style={{ fontSize: 12, color: theme.textFaint, marginBottom: 12, lineHeight: 1.5 }}>
           {t(
             "끄면(기본값) 걸음수 기반 변경 제안을 주 1회 확인하고 직접 승인해야 반영돼요. 켜면 검토 없이 걸음수가 바로 활동 계수에 반영돼요.",
@@ -5614,22 +6694,22 @@ function SettingsTab({ settings, onSaveSettings, workouts, nutrition, bodycomp, 
           <button
             onClick={() => onSaveSettings({ ...settings, activityFullAutomation: !settings.activityFullAutomation })}
             style={{
-              width: 44, height: 26, borderRadius: 12, border: "none", cursor: "pointer", position: "relative",
+              width: 44, height: 26, borderRadius: 2, border: "none", cursor: "pointer", position: "relative",
               background: settings.activityFullAutomation ? theme.lift : theme.surfaceRaised,
               transition: "background 0.2s ease",
             }}>
             <div style={{
               position: "absolute", top: 3, left: settings.activityFullAutomation ? 21 : 3,
-              width: 20, height: 20, borderRadius: "50%", background: "#FBFAF2",
+              width: 20, height: 20, borderRadius: 2, background: "#F5F5F3",
               transition: "left 0.2s ease",
             }} />
           </button>
         </div>
       </Card>
 
-      <SettingsSectionLabel>{t("알림 & 피드백", "Notifications & Feedback")}</SettingsSectionLabel>
+      <SettingsSectionLabel>{en("알림 & 피드백", "Notifications & Feedback")}</SettingsSectionLabel>
       <Card>
-        <SectionTitle>{t("촉각 피드백", "Haptic Feedback")}</SectionTitle>
+        <SectionTitle>{en("촉각 피드백", "Haptic Feedback")}</SectionTitle>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <span style={{ fontSize: 13, color: theme.text }}>{t("탭할 때 살짝 진동", "Vibrate lightly on tap")}</span>
           <button
@@ -5639,13 +6719,13 @@ function SettingsTab({ settings, onSaveSettings, workouts, nutrition, bodycomp, 
               onSaveSettings({ ...settings, hapticsEnabled: next });
             }}
             style={{
-              width: 44, height: 26, borderRadius: 12, border: "none", cursor: "pointer", position: "relative",
+              width: 44, height: 26, borderRadius: 2, border: "none", cursor: "pointer", position: "relative",
               background: settings.hapticsEnabled ? theme.lift : theme.surfaceRaised,
               transition: "background 0.2s ease",
             }}>
             <div style={{
               position: "absolute", top: 3, left: settings.hapticsEnabled ? 21 : 3,
-              width: 20, height: 20, borderRadius: "50%", background: "#FBFAF2",
+              width: 20, height: 20, borderRadius: 2, background: "#F5F5F3",
               transition: "left 0.2s ease",
             }} />
           </button>
@@ -5653,7 +6733,7 @@ function SettingsTab({ settings, onSaveSettings, workouts, nutrition, bodycomp, 
       </Card>
 
       <Card>
-        <SectionTitle>{t("매일 알림", "Daily Reminder")}</SectionTitle>
+        <SectionTitle>{en("매일 알림", "Daily Reminder")}</SectionTitle>
         <div style={{ fontSize: 12, color: theme.textFaint, marginBottom: 12, lineHeight: 1.5 }}>
           {t("설정한 시간에 데일리 로그를 남겼는지 알려줘요.", "Reminds you to log your Day Log at the time you pick.")}
         </div>
@@ -5679,13 +6759,13 @@ function SettingsTab({ settings, onSaveSettings, workouts, nutrition, bodycomp, 
               onSaveSettings({ ...settings, dailyReminderEnabled: next });
             }}
             style={{
-              width: 44, height: 26, borderRadius: 12, border: "none", cursor: "pointer", position: "relative",
+              width: 44, height: 26, borderRadius: 2, border: "none", cursor: "pointer", position: "relative",
               background: settings.dailyReminderEnabled ? theme.lift : theme.surfaceRaised,
               transition: "background 0.2s ease",
             }}>
             <div style={{
               position: "absolute", top: 3, left: settings.dailyReminderEnabled ? 21 : 3,
-              width: 20, height: 20, borderRadius: "50%", background: "#FBFAF2",
+              width: 20, height: 20, borderRadius: 2, background: "#F5F5F3",
               transition: "left 0.2s ease",
             }} />
           </button>
@@ -5707,7 +6787,103 @@ function SettingsTab({ settings, onSaveSettings, workouts, nutrition, bodycomp, 
         )}
       </Card>
 
-      <SettingsSectionLabel>{t("데이터", "Data")}</SettingsSectionLabel>
+      <SettingsSectionLabel>{en("데이터", "Data")}</SettingsSectionLabel>
+      <Card>
+        <SectionTitle>{t("백업 & 복원", "Backup & Restore")}</SectionTitle>
+        <div style={{ fontSize: 12, color: theme.textFaint, marginBottom: 12, lineHeight: 1.5 }}>
+          {t(
+            "앱 데이터는 이 기기 안에만 저장됩니다. 앱 삭제나 재설치 전에 JSON 백업을 먼저 내보내세요.",
+            "Your app data is stored only on this device. Export a JSON backup before deleting or reinstalling the app."
+          )}
+        </div>
+        <input
+          ref={backupFileInputRef}
+          type="file"
+          accept="application/json,.json"
+          onChange={importJsonBackup}
+          style={{ display: "none" }}
+        />
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+          <button
+            onClick={exportJsonBackup}
+            style={{
+              padding: "11px 12px", borderRadius: 2, border: `1px solid ${theme.lift}`,
+              background: tint(theme.lift, 0.14), color: theme.text, fontSize: 13,
+              fontWeight: 750, cursor: "pointer", fontFamily: MONO_FONT_STACK,
+              letterSpacing: "0.04em", textTransform: "uppercase",
+            }}
+          >
+            {t("JSON 내보내기", "Export JSON")}
+          </button>
+          <button
+            onClick={() => backupFileInputRef.current?.click()}
+            style={{
+              padding: "11px 12px", borderRadius: 2, border: `1px solid ${theme.border}`,
+              background: "transparent", color: theme.text, fontSize: 13,
+              fontWeight: 700, cursor: "pointer", fontFamily: MONO_FONT_STACK,
+              letterSpacing: "0.04em", textTransform: "uppercase",
+            }}
+          >
+            {t("JSON 가져오기", "Import JSON")}
+          </button>
+        </div>
+        <div style={{ fontSize: 11, color: theme.textFaint, marginTop: 10, lineHeight: 1.5 }}>
+          {t(
+            "복원은 현재 데이터를 덮어씁니다. 중요한 변경 전에는 먼저 내보내기를 해두세요.",
+            "Restore replaces current data. Export first before major changes."
+          )}
+        </div>
+        {backupText && (
+          <div style={{ marginTop: 12, borderTop: `1px solid ${theme.border}`, paddingTop: 12 }}>
+            <div style={{ fontSize: 12, color: theme.text, fontWeight: 750, marginBottom: 6 }}>
+              {t("백업 JSON 생성됨", "Backup JSON ready")}
+            </div>
+            <div style={{ fontSize: 11, color: theme.textFaint, lineHeight: 1.45, marginBottom: 8 }}>
+              {t(
+                "파일 저장 창이 안 뜨면 아래 내용을 복사해서 메모장에 .json 파일로 저장하세요.",
+                "If the file save sheet did not appear, copy the text below and save it as a .json file."
+              )}
+            </div>
+            <textarea
+              readOnly
+              value={backupText}
+              onFocus={(e) => e.target.select()}
+              style={{
+                ...getInputStyle(theme),
+                minHeight: 120,
+                resize: "vertical",
+                fontSize: 10.5,
+                fontFamily: MONO_FONT_STACK,
+                lineHeight: 1.35,
+                whiteSpace: "pre",
+              }}
+            />
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 8 }}>
+              <button
+                onClick={async () => {
+                  const ok = await copyTextToClipboard(backupText);
+                  window.alert(ok ? t("백업 JSON을 클립보드에 복사했습니다.", "Backup JSON copied to clipboard.") : t("자동 복사 실패. 텍스트를 길게 눌러 직접 복사해주세요.", "Auto-copy failed. Long-press the text and copy it manually."));
+                }}
+                style={{ padding: "9px 10px", borderRadius: 2, border: `1px solid ${theme.lift}`, background: tint(theme.lift, 0.14), color: theme.text, fontSize: 12.5, fontWeight: 750, cursor: "pointer" }}
+              >
+                {t("복사", "Copy")}
+              </button>
+              <button
+                onClick={() => { setBackupText(""); setBackupFilename(""); }}
+                style={{ padding: "9px 10px", borderRadius: 2, border: `1px solid ${theme.border}`, background: "transparent", color: theme.text, fontSize: 12.5, fontWeight: 650, cursor: "pointer" }}
+              >
+                {t("닫기", "Close")}
+              </button>
+            </div>
+            {backupFilename && (
+              <div style={{ fontSize: 10.5, color: theme.textFaint, marginTop: 7, fontFamily: MONO_FONT_STACK }}>
+                {backupFilename}
+              </div>
+            )}
+          </div>
+        )}
+      </Card>
+
       <Card>
         <SectionTitle>Footprint</SectionTitle>
         <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
@@ -5760,7 +6936,7 @@ function SettingsTab({ settings, onSaveSettings, workouts, nutrition, bodycomp, 
                 await saveKey("settings", { ...settings, devDateOffsetDays: newOffset });
                 window.location.reload();
               }}
-              style={{ flex: 1, padding: 8, borderRadius: 12, fontSize: 12.5, border: `1px solid ${theme.border}`, background: "transparent", color: theme.text, cursor: "pointer" }}>
+              style={{ flex: 1, padding: 8, borderRadius: 2, fontSize: 12.5, border: `1px solid ${theme.border}`, background: "transparent", color: theme.text, cursor: "pointer" }}>
               {label}{t("일", "d")}
             </button>
           ))}
@@ -5778,13 +6954,13 @@ function SettingsTab({ settings, onSaveSettings, workouts, nutrition, bodycomp, 
       </Card>
 
       <Card>
-        <SectionTitle>{t("앱 소개", "App Intro")}</SectionTitle>
+        <SectionTitle>{en("앱 소개", "App Intro")}</SectionTitle>
         <div style={{ fontSize: 12, color: theme.textFaint, marginBottom: 10, lineHeight: 1.5 }}>
           {t("처음 설치할 때 봤던 기능 소개를 다시 볼 수 있어요.", "Watch the feature walkthrough you saw on first install again.")}
         </div>
         <button onClick={onShowIntro}
           style={{
-            width: "100%", padding: "10px 14px", borderRadius: 12, border: `1px solid ${theme.border}`,
+            width: "100%", padding: "10px 14px", borderRadius: 2, border: `1px solid ${theme.border}`,
             background: "none", color: theme.text, fontSize: 13, fontWeight: 600, cursor: "pointer",
           }}>
           {t("설명 다시 보기", "View intro again")}
@@ -5792,21 +6968,7 @@ function SettingsTab({ settings, onSaveSettings, workouts, nutrition, bodycomp, 
       </Card>
 
       <Card>
-        <SectionTitle>{t("패치노트", "Patch Notes")}</SectionTitle>
-        <div style={{ fontSize: 12, color: theme.textFaint, marginBottom: 10, lineHeight: 1.5 }}>
-          {t("웹앱 업데이트 후 바뀐 내용을 확인할 수 있어요.", "See what changed after web app updates.")}
-        </div>
-        <button onClick={onShowPatchNotes}
-          style={{
-            width: "100%", padding: "10px 14px", borderRadius: 12, border: `1px solid ${theme.border}`,
-            background: "none", color: theme.text, fontSize: 13, fontWeight: 600, cursor: "pointer",
-          }}>
-          {t("패치노트 보기", "View patch notes")}
-        </button>
-      </Card>
-
-      <Card>
-        <SectionTitle>{t("정보", "About")}</SectionTitle>
+        <SectionTitle>{en("정보", "About")}</SectionTitle>
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
           <div style={{ fontSize: 13, color: theme.textDim }}>
             {t("개발자", "Developer")}: <span style={{ color: theme.text, fontWeight: 600 }}>Jinwoo B</span>
@@ -5830,15 +6992,13 @@ function SettingsTab({ settings, onSaveSettings, workouts, nutrition, bodycomp, 
 }
 
 function Onboarding({ onDone, settings, onSaveSettings, isFirstTime }) {
-  const { t } = useLang();
+  const { t, en } = useLang();
   const theme = useTheme();
   const [step, setStep] = useState(0);
   const [showQuickSetup, setShowQuickSetup] = useState(false);
   const [qsAge, setQsAge] = useState("");
   const [qsHeight, setQsHeight] = useState("");
   const [qsWeight, setQsWeight] = useState("");
-  const [qsBodyfat, setQsBodyfat] = useState("");
-  const [qsBodyfatMode, setQsBodyfatMode] = useState("skip");
   const [qsGoal, setQsGoal] = useState("cut");
   const [qsActivity, setQsActivity] = useState("low");
   const [qsPregnant, setQsPregnant] = useState(false);
@@ -5862,14 +7022,6 @@ function Onboarding({ onDone, settings, onSaveSettings, isFirstTime }) {
     if (qsAge) updates.ageYears = Number(qsAge);
     if (qsHeight) updates.heightCm = Number(qsHeight);
     if (qsWeight) updates.startWeight = Number(qsWeight);
-    if (qsBodyfat && qsBodyfatMode !== "skip") {
-      updates.startBF = Number(qsBodyfat);
-      updates.startBFSource = qsBodyfatMode === "visual" ? "visual_estimate" : "manual";
-      updates.startBFConfidence = qsBodyfatMode === "visual" ? "low" : "high";
-    } else {
-      updates.startBFSource = "none";
-      updates.startBFConfidence = "none";
-    }
     onSaveSettings({ ...settings, ...updates });
     onDone();
   };
@@ -5903,28 +7055,12 @@ function Onboarding({ onDone, settings, onSaveSettings, isFirstTime }) {
           </div>
           <Field label={t("현재 체중(kg)", "Current Weight (kg)")}><TextInput type="number" step="0.1" value={qsWeight} onChange={(e) => setQsWeight(e.target.value)} placeholder="91.4" /></Field>
           <div>
-            <div style={{ fontSize: 12, color: theme.textFaint, marginBottom: 6 }}>{t("체지방률", "Body Fat %")}</div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6, marginBottom: 8 }}>
-              {[["manual", t("직접 입력", "Manual")], ["visual", t("눈대중", "Estimate")], ["skip", t("건너뛰기", "Skip")]].map(([id, label]) => (
-                <button key={id} onClick={() => { setQsBodyfatMode(id); if (id === "skip") setQsBodyfat(""); }}
-                  style={{ padding: "8px 2px", borderRadius: 12, fontSize: 12, cursor: "pointer", border: `1px solid ${qsBodyfatMode === id ? theme.lift : theme.border}`, background: qsBodyfatMode === id ? tint(theme.lift, 0.16) : "transparent", color: theme.text }}>
-                  {label}
-                </button>
-              ))}
-            </div>
-            {qsBodyfatMode === "manual" && <TextInput type="number" step="0.1" value={qsBodyfat} onChange={(e) => setQsBodyfat(e.target.value)} placeholder="22" />}
-            {qsBodyfatMode === "visual" && <BodyFatEstimateSelector value={qsBodyfat} onSelect={(value) => setQsBodyfat(String(value))} compact />}
-            <div style={{ fontSize: 11, color: theme.textFaint, lineHeight: 1.35, marginTop: 6 }}>
-              {t("모르면 건너뛰거나 눈대중으로 시작해도 됩니다. 나중에 Body Update에서 수정할 수 있어요.", "You can skip this or start with a visual estimate. Update it later in Body Update.")}
-            </div>
-          </div>
-          <div>
             <div style={{ fontSize: 12, color: theme.textFaint, marginBottom: 6 }}>{t("목표", "Goal")}</div>
             <div style={{ display: "flex", gap: 6 }}>
               {[["cut", t("다이어트", "Cut")], ["maintain", t("유지어트", "Maintain")], ["gain", t("증량", "Gain")]].map(([id, label]) => (
                 <button key={id} onClick={() => setQsGoal(id)}
                   style={{
-                    flex: 1, padding: 9, borderRadius: 12, fontSize: 12.5, cursor: "pointer",
+                    flex: 1, padding: 9, borderRadius: 2, fontSize: 12.5, cursor: "pointer",
                     border: `1px solid ${qsGoal === id ? theme.lift : theme.border}`,
                     background: qsGoal === id ? tint(theme.lift, 0.16) : "transparent", color: theme.text,
                   }}>
@@ -5942,7 +7078,7 @@ function Onboarding({ onDone, settings, onSaveSettings, isFirstTime }) {
               ].map(([id, label]) => (
                 <button key={id} onClick={() => setQsActivity(id)}
                   style={{
-                    flex: 1, padding: "8px 2px", borderRadius: 12, fontSize: 12, cursor: "pointer",
+                    flex: 1, padding: "8px 2px", borderRadius: 2, fontSize: 12, cursor: "pointer",
                     border: `1px solid ${qsActivity === id ? theme.lift : theme.border}`,
                     background: qsActivity === id ? tint(theme.lift, 0.16) : "transparent", color: theme.text,
                   }}>
@@ -5996,7 +7132,7 @@ function Onboarding({ onDone, settings, onSaveSettings, isFirstTime }) {
         <div style={{ display: "flex", gap: 6, margin: "6px 0 4px" }}>
           {slides.map((_, i) => (
             <div key={i} style={{
-              width: i === step ? 18 : 6, height: 6, borderRadius: 12,
+              width: i === step ? 18 : 6, height: 6, borderRadius: 999,
               background: i === step ? theme.lift : theme.border, transition: "width 0.2s ease",
             }} />
           ))}
@@ -6021,58 +7157,9 @@ function Onboarding({ onDone, settings, onSaveSettings, isFirstTime }) {
 // Shown for a few seconds after a delete, giving a chance to undo before
 // it's gone for good — small icon-only delete buttons in scrollable lists
 // are easy to tap by accident, so a single irreversible tap felt risky.
-function PatchNotesDialog({ onClose }) {
-  const { t, lang } = useLang();
-  const theme = useTheme();
-  const latest = PATCH_NOTES[0];
-  const dialog = (
-    <div
-      role="presentation"
-      style={{
-        position: "fixed", inset: 0, zIndex: 1150, background: "rgba(0,0,0,0.52)",
-        display: "flex", alignItems: "flex-end", justifyContent: "center",
-        padding: "max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom))",
-        boxSizing: "border-box",
-      }}
-    >
-      <div
-        role="dialog" aria-modal="true" aria-label={t("패치노트", "Patch Notes")}
-        onPointerDown={(e) => e.stopPropagation()}
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          background: theme.darkPanel || theme.surface, border: `1px solid ${theme.border}`, borderRadius: 22,
-          padding: 18, maxWidth: 460, width: "100%", boxSizing: "border-box",
-          boxShadow: "0 22px 54px rgba(0,0,0,0.42)", fontFamily: BODY_FONT_STACK,
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, marginBottom: 12 }}>
-          <div>
-            <div style={{ fontSize: 12, color: theme.textFaint, fontWeight: 850, letterSpacing: "0.08em", textTransform: "uppercase" }}>{t("업데이트", "What's New")}</div>
-            <div style={{ fontSize: 18, fontWeight: 900, color: theme.text, marginTop: 3 }}>{lang === "en" ? latest.titleEn : latest.titleKo}</div>
-            <div style={{ fontSize: 12, color: theme.textDim, marginTop: 3 }}>v{latest.version} · {latest.date}</div>
-          </div>
-          <button onClick={onClose} aria-label="Close" style={{ width: 34, height: 34, borderRadius: 12, border: `1px solid ${theme.border}`, background: "transparent", color: theme.textDim, display: "grid", placeItems: "center", cursor: "pointer", flexShrink: 0 }}>
-            <X size={16} />
-          </button>
-        </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
-          {(lang === "en" ? latest.itemsEn : latest.itemsKo).map((item, index) => (
-            <div key={index} style={{ display: "flex", gap: 8, alignItems: "flex-start", color: theme.textDim, fontSize: 13, lineHeight: 1.45 }}>
-              <span style={{ width: 18, height: 18, borderRadius: 999, background: tint(theme.lift, 0.16), color: theme.lift, display: "grid", placeItems: "center", fontSize: 11, fontWeight: 900, flexShrink: 0 }}>{index + 1}</span>
-              <span>{item}</span>
-            </div>
-          ))}
-        </div>
-        <PrimaryButton onClick={onClose}>{t("확인", "Got it")}</PrimaryButton>
-      </div>
-    </div>
-  );
-  return typeof document !== "undefined" ? createPortal(dialog, document.body) : dialog;
-}
-
 function ConfirmDialog({ message, onConfirm, onCancel, confirmLabel, cancelLabel, tone = "danger", hideCancel = false }) {
   const theme = useTheme();
-  const { t } = useLang();
+  const { t, en } = useLang();
   const dialog = (
     <div
       role="presentation"
@@ -6088,7 +7175,7 @@ function ConfirmDialog({ message, onConfirm, onCancel, confirmLabel, cancelLabel
         onPointerDown={(e) => e.stopPropagation()}
         onClick={(e) => e.stopPropagation()}
         style={{
-          background: theme.darkPanel || theme.surface, border: `1px solid ${theme.border}`, borderRadius: 12, padding: 20,
+          background: theme.darkPanel || theme.surface, border: `1px solid ${theme.border}`, borderRadius: 2, padding: 20,
           maxWidth: 360, width: "100%", boxSizing: "border-box",
           boxShadow: "0 18px 44px rgba(0,0,0,0.36)", fontFamily: BODY_FONT_STACK,
         }}
@@ -6097,15 +7184,15 @@ function ConfirmDialog({ message, onConfirm, onCancel, confirmLabel, cancelLabel
         <div style={{ display: "flex", gap: 8 }}>
           {!hideCancel && (
             <button data-confirm-cancel="true" onClick={onCancel} style={{
-              flex: 1, minHeight: 46, padding: 11, borderRadius: 12, border: `1px solid ${theme.border}`,
+              flex: 1, minHeight: 46, padding: 11, borderRadius: 2, border: `1px solid ${theme.border}`,
               background: "transparent", color: theme.textDim, cursor: "pointer", fontSize: 13, fontWeight: 700,
             }}>
               {cancelLabel || t("취소", "Cancel")}
             </button>
           )}
           <button onClick={onConfirm} style={{
-            flex: 1, minHeight: 46, padding: 11, borderRadius: 12, border: "none",
-            background: tone === "danger" ? theme.danger : theme.lift, color: "#FBFAF2", cursor: "pointer", fontSize: 13, fontWeight: 800,
+            flex: 1, minHeight: 46, padding: 11, borderRadius: 2, border: "none",
+            background: tone === "danger" ? theme.danger : theme.lift, color: tone === "danger" ? "#FBFAF2" : theme.heroText, cursor: "pointer", fontSize: 13, fontWeight: 800,
           }}>
             {confirmLabel || t("삭제", "Delete")}
           </button>
@@ -6116,13 +7203,81 @@ function ConfirmDialog({ message, onConfirm, onCancel, confirmLabel, cancelLabel
   return typeof document !== "undefined" ? createPortal(dialog, document.body) : dialog;
 }
 
+// While an edit modal is open, lock scrolling on all tab panels (the elements
+// that actually scroll — body is overflow:hidden). The modal itself is
+// portaled to <body> so it escapes the slide container's transform (a
+// transformed ancestor would otherwise offset its position:fixed).
+function useEditModalScrollLock(locked) {
+  useEffect(() => {
+    if (!locked) return;
+    const panels = Array.from(document.querySelectorAll("[data-tab-id]"));
+    const restore = panels.map((el) => ({ el, overflowY: el.style.overflowY, touchAction: el.style.touchAction }));
+    panels.forEach((el) => { el.style.overflowY = "hidden"; el.style.touchAction = "none"; });
+    return () => { restore.forEach(({ el, overflowY, touchAction }) => { el.style.overflowY = overflowY; el.style.touchAction = touchAction; }); };
+  }, [locked]);
+}
+function EditModalBackdrop({ onClose }) {
+  const stopScroll = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+  return (
+    <div
+      role="presentation"
+      onClick={onClose}
+      onWheel={stopScroll}
+      onTouchMove={stopScroll}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 90,
+        background: "rgba(0,0,0,0.50)",
+        backdropFilter: "blur(2px)",
+        touchAction: "none",
+        overscrollBehavior: "none",
+        animation: "hlFadeIn 0.22s ease",
+      }}
+    />
+  );
+}
+function editModalCardStyle(theme) {
+  return {
+    position: "fixed",
+    zIndex: 100,
+    left: 10,
+    right: 10,
+    top: "max(54px, calc(env(safe-area-inset-top) + 40px))",
+    bottom: "max(54px, calc(env(safe-area-inset-bottom) + 40px))",
+    width: "auto",
+    maxWidth: "min(500px, calc(100vw - 20px))",
+    maxHeight: "calc(var(--app-viewport-height, 100vh) - 108px)",
+    minWidth: 0,
+    minHeight: 0,
+    margin: "0 auto",
+    overflowY: "auto",
+    overflowX: "hidden",
+    WebkitOverflowScrolling: "touch",
+    overscrollBehavior: "contain",
+    boxSizing: "border-box",
+    boxShadow: "0 20px 50px rgba(0,0,0,0.40)",
+    borderColor: theme.lift,
+    animation: "hlModalIn 0.3s cubic-bezier(0.22, 1, 0.36, 1)",
+  };
+}
+
+// Staggered entrance for list items — each item fades/slides in slightly after
+// the previous, capped so long lists don't feel slow. Uses `both` fill so items
+// start hidden before their delay.
+function staggerStyle(i, per = 0.045, max = 8) {
+  return { animation: "hlViewIn 0.32s cubic-bezier(0.22, 1, 0.36, 1) both", animationDelay: `${Math.min(i, max) * per}s` };
+}
 function EmptyState({ text, icon: Icon, actionLabel, onAction }) {
   const theme = useTheme();
   return (
     <div style={{ textAlign: "center", padding: "28px 16px", display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
       {Icon && (
         <div style={{
-          width: 42, height: 42, borderRadius: 12, border: `1px solid ${theme.border}`, background: "transparent",
+          width: 42, height: 42, borderRadius: 2, border: `1px solid ${theme.border}`, background: "transparent",
           display: "flex", alignItems: "center", justifyContent: "center",
         }}>
           <Icon size={20} color={theme.textFaint} />
@@ -6132,7 +7287,7 @@ function EmptyState({ text, icon: Icon, actionLabel, onAction }) {
       {actionLabel && onAction && (
         <button onClick={onAction} style={{
           background: "none", border: `1px solid ${theme.lift}`, color: theme.lift,
-          borderRadius: 12, padding: "7px 14px", fontSize: 12.5, fontWeight: 600, cursor: "pointer", marginTop: 2,
+          borderRadius: 2, padding: "7px 14px", fontSize: 12.5, fontWeight: 600, cursor: "pointer", marginTop: 2,
         }}>
           {actionLabel}
         </button>
@@ -6148,7 +7303,6 @@ export default function App() {
   const [loaded, setLoaded] = useState(false);
   const [showIntroAgain, setShowIntroAgain] = useState(false);
   const [showSettingsSheet, setShowSettingsSheet] = useState(false);
-  const [showPatchNotes, setShowPatchNotes] = useState(false);
   const [tab, setTab] = useState("today");
   const [actInitialView, setActInitialView] = useState(null);
   const [actResetSignal, setActResetSignal] = useState(0);
@@ -6219,7 +7373,7 @@ export default function App() {
         loadKey("dayLogs", []),
       ]);
       const migratedSettings = migrateSettings(s);
-      setSettings(migratedSettings); setBodycompState((b || []).map(migrateBodyEntry)); setWorkoutsState((w || []).map(migrateWorkoutEntry)); setNutritionState((n || []).map(migrateNutritionEntry)); setTdeeHistoryState(t); setCustomFoodsState(cf); setProgramsState(pr); setWeekPlanState(wp); setDayLogsState(dl);
+      setSettings(migratedSettings); setBodycompState((b || []).map(migrateBodyEntry)); setWorkoutsState((w || []).map(migrateWorkoutEntry)); setNutritionState((n || []).map(migrateNutritionEntry)); setTdeeHistoryState(t); setCustomFoodsState(cf); setProgramsState(migratePrograms(pr)); setWeekPlanState(wp); setDayLogsState(dl);
       setDevDateOffsetDays(s.devDateOffsetDays || 0);
       setHapticsEnabled(s.hapticsEnabled !== false);
       setLoaded(true);
@@ -6237,36 +7391,6 @@ export default function App() {
   const saveSettings = useCallback((v) => { setSettings(v); saveKey("settings", v).then((ok) => !ok && setErr("저장 실패 / Save failed")); }, []);
 
   useEffect(() => {
-    if (!loaded) return;
-    let mounted = true;
-    loadKey("lastSeenPatchNotesVersion", null).then((seen) => {
-      if (mounted && seen !== APP_VERSION) setShowPatchNotes(true);
-    });
-    return () => { mounted = false; };
-  }, [loaded]);
-
-  const closePatchNotes = useCallback(() => {
-    setShowPatchNotes(false);
-    saveKey("lastSeenPatchNotesVersion", APP_VERSION);
-  }, []);
-
-  useEffect(() => {
-    if (!document.getElementById("hybrid-log-font")) {
-      const preconnect1 = document.createElement("link");
-      preconnect1.rel = "preconnect";
-      preconnect1.href = "https://fonts.googleapis.com";
-      const preconnect2 = document.createElement("link");
-      preconnect2.rel = "preconnect";
-      preconnect2.href = "https://fonts.gstatic.com";
-      preconnect2.crossOrigin = "anonymous";
-      const link = document.createElement("link");
-      link.id = "hybrid-log-font";
-      link.rel = "stylesheet";
-      link.href = "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=DM+Sans:wght@400;500;600;700;800&family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap";
-      document.head.appendChild(preconnect1);
-      document.head.appendChild(preconnect2);
-      document.head.appendChild(link);
-    }
     if (!document.getElementById("hybrid-log-tap-style")) {
       const style = document.createElement("style");
       style.id = "hybrid-log-tap-style";
@@ -6281,7 +7405,19 @@ export default function App() {
         input, textarea, select { font-family: ${BODY_FONT_STACK}; }
         button { font-family: ${BODY_FONT_STACK}; }
         @keyframes hlTabBounce { 0% { transform: scale(1); } 35% { transform: scale(1.28); } 60% { transform: scale(0.92); } 100% { transform: scale(1); } }
+        @media (max-height: 780px) { .today-compact { gap: 9px !important; } .today-compact button { min-height: 0; } }
+        .edit-compact-modal { padding-top: 10px !important; padding-bottom: 8px !important; }
+        .edit-compact-modal label { gap: 2px !important; font-size: 10.5px !important; }
+        .edit-compact-modal input, .edit-compact-modal textarea { padding: 7px 9px !important; min-height: 34px !important; font-size: 12.5px !important; }
+        .edit-compact-modal button { min-height: 34px !important; font-size: 12px !important; }
+        .edit-compact-modal textarea { min-height: 34px !important; max-height: 54px !important; }
         @keyframes hlSkeletonPulse { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
+        @keyframes hlFadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes hlModalIn { from { opacity: 0; transform: translateY(10px) scale(0.985); } to { opacity: 1; transform: translateY(0) scale(1); } }
+        @keyframes hlSheetIn { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes hlViewIn { from { opacity: 0; transform: translateY(9px); } to { opacity: 1; transform: translateY(0); } }
+        button { transition: transform 0.13s ease, opacity 0.13s ease; }
+        button:not([disabled]):active { transform: scale(0.97); opacity: 0.6; }
       `;
       document.head.appendChild(style);
     }
@@ -6326,13 +7462,8 @@ export default function App() {
   // via getTodaySteps's own rollover (calling it triggers the archive).
   const [recentAvgSteps, setRecentAvgSteps] = useState(null);
   const [currentSteps, setCurrentSteps] = useState(null);
-  const stepTrackingEnabled = isAndroidStepRuntime();
   useEffect(() => {
-    if (!loaded) return;
-    if (!stepTrackingEnabled) {
-      setRecentAvgSteps(null);
-      return;
-    }
+    if (!loaded || WEB_BUILD) return;
     let mounted = true;
     (async () => {
       try {
@@ -6340,18 +7471,14 @@ export default function App() {
         const avg = await getRecentAvgSteps();
         if (mounted) setRecentAvgSteps(avg);
       } catch (e) {
-        // ignore — not running on a native Android platform
+        // ignore — not running on a native platform
       }
     })();
     return () => { mounted = false; };
-  }, [loaded, stepTrackingEnabled]);
+  }, [loaded]);
 
   useEffect(() => {
-    if (!loaded) return;
-    if (!stepTrackingEnabled) {
-      setCurrentSteps(null);
-      return;
-    }
+    if (!loaded || WEB_BUILD) return;
     let mounted = true;
     let interval;
     const refresh = async () => {
@@ -6361,7 +7488,26 @@ export default function App() {
     refresh();
     interval = setInterval(refresh, 10000);
     return () => { mounted = false; if (interval) clearInterval(interval); };
-  }, [loaded, stepTrackingEnabled]);
+  }, [loaded]);
+
+  useEffect(() => {
+    if (!loaded || !settings?.cheatDayActive || settings.cheatDayUsedDate !== todayStr()) return undefined;
+    const { weight, bodyfat } = getLatestBodyComp(bodycomp, settings);
+    const engine = estimateTdeeEngine(settings, bodycomp, nutrition, workouts, weight, recentAvgSteps);
+    const effectiveTdee = targetTdee(settings, engine);
+    const baseTarget = computeActiveTarget(settings, effectiveTdee, weight, bodyfat, engine?.bmr);
+    if (!baseTarget?.target) return undefined;
+    const now = nowDate();
+    const end = nowDate();
+    end.setHours(23, 59, 0, 0);
+    const delay = Math.max(1000, end.getTime() - now.getTime());
+    const timer = setTimeout(() => {
+      if (shouldReclaimUnusedCheatDay(settings, nutrition, baseTarget.target, todayStr())) {
+        saveSettings(reclaimCheatDaySettings(settings));
+      }
+    }, delay);
+    return () => clearTimeout(timer);
+  }, [loaded, settings, bodycomp, nutrition, workouts, recentAvgSteps, saveSettings]);
 
   const tabs = [
     { id: "today", label: t("Today", "Today"), icon: TrendingUp, color: theme.act || theme.ring },
@@ -6378,6 +7524,7 @@ export default function App() {
   const trackWrapRef = useRef(null);
   const slideRefs = useRef({});
   const [showScrollTop, setShowScrollTop] = useState(false);
+  const [scrolled, setScrolled] = useState(false);
   const [trackWidth, setTrackWidth] = useState(360);
   useEffect(() => {
     const el = trackWrapRef.current;
@@ -6395,6 +7542,10 @@ export default function App() {
 
   const dragStartRef = useRef(null);
   const draggingRef = useRef(false);
+  const trackInnerRef = useRef(null);
+  const dragVisualRef = useRef(0);
+  const dragRafRef = useRef(0);
+  const suppressClickRef = useRef(false);
   const dragScrollTopRef = useRef(0);
   const dragLockedSlideRef = useRef(null);
   const [dragPx, setDragPx] = useState(0);
@@ -6434,16 +7585,13 @@ export default function App() {
   useEffect(() => {
     const el = slideRefs.current[tab];
     setShowScrollTop(!!el && el.scrollTop > 150);
+    setScrolled(!!el && el.scrollTop > 4);
   }, [tab]);
 
   const scrollActiveTabToTop = () => {
     const el = slideRefs.current[tab];
     if (el) el.scrollTo({ top: 0, behavior: "smooth" });
   };
-  useEffect(() => {
-    return () => unlockHorizontalSwipeScroll();
-  }, []);
-
 
   const returnToToday = useCallback(() => {
     setShowSettingsSheet(false);
@@ -6524,38 +7672,43 @@ export default function App() {
     };
   }, [tab, actCurrentView, showSettingsSheet, showIntroAgain, returnToToday]);
 
-  const lockHorizontalSwipeScroll = () => {
-    const activeSlide = slideRefs.current[tab];
-    if (!activeSlide) return;
-    dragLockedSlideRef.current = activeSlide;
-    dragScrollTopRef.current = activeSlide.scrollTop || 0;
-    activeSlide.style.overflowY = "hidden";
-    activeSlide.style.touchAction = "none";
-  };
-
   const unlockHorizontalSwipeScroll = () => {
-    const lockedSlide = dragLockedSlideRef.current;
-    if (lockedSlide) {
-      lockedSlide.style.overflowY = "auto";
-      lockedSlide.style.touchAction = "pan-y";
+    const slide = dragLockedSlideRef.current;
+    if (slide) {
+      slide.style.overflowY = slide.dataset.tabId === "today" ? "hidden" : "auto";
+      slide.style.touchAction = "pan-y";
     }
     dragLockedSlideRef.current = null;
   };
-
+  const lockHorizontalSwipeScroll = () => {
+    const slide = slideRefs.current[tab];
+    if (!slide) return;
+    dragLockedSlideRef.current = slide;
+    dragScrollTopRef.current = slide.scrollTop || 0;
+    slide.style.overflowY = "hidden";
+    slide.style.touchAction = "none";
+  };
   const keepHorizontalSwipeScrollLocked = () => {
-    const lockedSlide = dragLockedSlideRef.current;
-    if (lockedSlide && Math.abs((lockedSlide.scrollTop || 0) - dragScrollTopRef.current) > 0.5) {
-      lockedSlide.scrollTop = dragScrollTopRef.current;
-    }
+    const slide = dragLockedSlideRef.current;
+    if (slide && Math.abs((slide.scrollTop || 0) - dragScrollTopRef.current) > 0.5) slide.scrollTop = dragScrollTopRef.current;
+  };
+  const resetSwipeGesture = () => {
+    if (dragRafRef.current) cancelAnimationFrame(dragRafRef.current);
+    dragRafRef.current = 0;
+    unlockHorizontalSwipeScroll();
+    dragStartRef.current = null;
+    draggingRef.current = false;
+    dragVisualRef.current = 0;
+    setLive(false);
+    setDragPx(0);
+    if (trackInnerRef.current) trackInnerRef.current.style.transform = `translate3d(${-tabIndex * trackWidth}px,0,0)`;
+    setTimeout(() => { suppressClickRef.current = false; }, 80);
   };
 
   const handleTouchStart = (e) => {
-    unlockHorizontalSwipeScroll();
-    const locked = e.target.closest && e.target.closest("input, textarea, select, button, a, [contenteditable='true'], [data-no-tab-swipe='true'], [role='dialog'], [role='menu']");
+    const locked = e.target.closest && e.target.closest("input, textarea, select, [contenteditable='true'], [data-no-tab-swipe='true'], [role='dialog'], [role='menu']");
     if (locked || document.activeElement?.matches?.("input, textarea, select, [contenteditable='true']")) { dragStartRef.current = null; return; }
     const touch = e.touches[0];
-    const activeSlide = slideRefs.current[tab];
-    dragScrollTopRef.current = activeSlide?.scrollTop || 0;
     dragStartRef.current = { x: touch.clientX, y: touch.clientY, time: Date.now() };
     draggingRef.current = false;
     setLive(false);
@@ -6569,6 +7722,7 @@ export default function App() {
     if (!draggingRef.current) {
       if (Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy) * 1.3) {
         draggingRef.current = true;
+        suppressClickRef.current = true;
         lockHorizontalSwipeScroll();
         setLive(true);
       } else if (Math.abs(dy) > 10 && Math.abs(dy) > Math.abs(dx) * 1.1) {
@@ -6579,42 +7733,51 @@ export default function App() {
         return; // still ambiguous — wait for a clearer read before deciding either way
       }
     }
-    e.preventDefault(); // once we've claimed the gesture, don't let vertical scroll ride along with the tab swipe
+    e.preventDefault(); // once claimed, stop vertical drift and descendant taps
     keepHorizontalSwipeScrollLocked();
     let clamped = dx;
     if (tabIndex === 0 && dx > 0) clamped = dx * 0.35; // rubber-band at the edges
     if (tabIndex === tabs.length - 1 && dx < 0) clamped = dx * 0.35;
-    setDragPx(clamped);
+    dragVisualRef.current = clamped;
+    if (!dragRafRef.current) dragRafRef.current = requestAnimationFrame(() => {
+      dragRafRef.current = 0;
+      if (trackInnerRef.current) trackInnerRef.current.style.transform = `translate3d(${-tabIndex * trackWidth + dragVisualRef.current}px,0,0)`;
+    });
   };
   const handleTouchEnd = () => {
-    if (!draggingRef.current) { unlockHorizontalSwipeScroll(); dragStartRef.current = null; return; }
+    if (!draggingRef.current) { dragStartRef.current = null; return; }
     // A quick short flick completes the swipe too — doesn't need to cross
     // the full drag-distance threshold, just needs to be fast.
     const elapsed = Date.now() - (dragStartRef.current?.time || Date.now());
-    const isFlick = elapsed < 250 && Math.abs(dragPx) > 36;
+    const isFlick = elapsed < 250 && Math.abs(dragVisualRef.current) > 36;
     const threshold = isFlick ? 42 : trackWidth * 0.25;
     setLive(false);
-    if (dragPx <= -threshold && tabIndex < tabs.length - 1) {
+    if (dragVisualRef.current <= -threshold && tabIndex < tabs.length - 1) {
       setTab(tabs[tabIndex + 1].id);
-    } else if (dragPx >= threshold && tabIndex > 0) {
+    } else if (dragVisualRef.current >= threshold && tabIndex > 0) {
       setTab(tabs[tabIndex - 1].id);
     }
     setDragPx(0);
+    dragVisualRef.current = 0;
+    if (trackInnerRef.current) trackInnerRef.current.style.transform = `translate3d(${-tabIndex * trackWidth}px,0,0)`;
+    setTimeout(() => { suppressClickRef.current = false; }, 80);
     dragStartRef.current = null;
     draggingRef.current = false;
     unlockHorizontalSwipeScroll();
   };
+  const handleTouchCancel = () => resetSwipeGesture();
 
   if (!loaded) {
     const pulse = (h, w = "100%") => (
       <div style={{
-        height: h, width: w, borderRadius: 12, background: theme.darkPanel2 || theme.surfaceRaised,
+        height: h, width: w, borderRadius: 2, background: theme.darkPanel2 || theme.surfaceRaised,
         animation: "hlSkeletonPulse 1.4s ease-in-out infinite",
       }} />
     );
     return (
       <div style={{ background: theme.bg, height: "var(--app-viewport-height, 100vh)", fontFamily: BODY_FONT_STACK, padding: 16, boxSizing: "border-box", display: "flex", flexDirection: "column", gap: 14 }}>
-        <style>{`@keyframes hlSkeletonPulse { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }`}</style>
+        <style>{`@media (max-height: 780px) { .today-compact { gap: 9px !important; } .today-compact button { min-height: 0; } }
+        @keyframes hlSkeletonPulse { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }`}</style>
         {pulse(20, "40%")}
         {pulse(120)}
         {pulse(90)}
@@ -6626,6 +7789,36 @@ export default function App() {
   return (
     <LangContext.Provider value={lang}>
     <ThemeContext.Provider value={theme}>
+    <style>{`
+      .today-compact { overflow: hidden; }
+      .today-compact button { min-height: 0; }
+      @media (max-height: 860px) {
+        .today-compact { gap: 9px !important; }
+        .today-meters { gap: 12px !important; }
+        .today-session > div, .today-session > button { padding-top: 11px !important; padding-bottom: 11px !important; }
+        .today-indicators button { padding-top: 9px !important; padding-bottom: 9px !important; }
+        .today-checklist button { padding-top: 9px !important; padding-bottom: 9px !important; }
+      }
+      @media (max-height: 760px) {
+        .today-compact { gap: 6px !important; }
+        .today-header [style*="margin-top: 7px"] { display: none !important; }
+        .today-meters { gap: 8px !important; }
+        .today-meters button > div:nth-child(1) { margin-bottom: 5px !important; }
+        .today-meters button > div:nth-child(2) { margin-bottom: 7px !important; }
+        .today-meters button > div:nth-child(2) > span:first-child { font-size: 29px !important; }
+        .today-session > div, .today-session > button { padding-top: 8px !important; padding-bottom: 8px !important; }
+        .today-session [style*="font-size: 22px"] { font-size: 19px !important; }
+        .today-indicators button { padding-top: 7px !important; padding-bottom: 7px !important; }
+        .today-indicators [style*="margin-bottom: 7px"] { margin-bottom: 4px !important; }
+        .today-checklist button { padding-top: 7px !important; padding-bottom: 7px !important; }
+      }
+      @media (max-height: 680px) {
+        .today-header { display: none; }
+        .today-compact { gap: 5px !important; }
+        .today-meters { gap: 7px !important; }
+        .today-checklist button { padding-top: 6px !important; padding-bottom: 6px !important; }
+      }
+    `}</style>
     {(!settings.hasOnboarded || showIntroAgain) && (
       <Onboarding
         settings={settings}
@@ -6640,30 +7833,51 @@ export default function App() {
       fontFamily: BODY_FONT_STACK, fontWeight: 500,
       display: "flex", flexDirection: "column", position: "relative",
     }}>
-      <div style={{ position: "relative", minHeight: 46, padding: "5px 52px 5px 16px", textAlign: "left", background: theme.bg, backdropFilter: "blur(10px)", borderBottom: `1px solid ${theme.border}`, display: "flex", alignItems: "center", justifyContent: "flex-start", overflow: "hidden" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
-          <div style={{ width: 30, height: 30, borderRadius: 10, background: `linear-gradient(135deg, ${theme.progress || theme.run}, ${theme.act || theme.lift})`, display: "flex", alignItems: "center", justifyContent: "center", color: "#FAF7F0", fontWeight: 950, fontSize: 15, lineHeight: 1, letterSpacing: "-0.04em", paddingTop: 1, boxShadow: `0 7px 18px ${tint(theme.act || theme.lift, 0.16)}` }}>H</div>
+      <div style={{ position: "relative", minHeight: 54, padding: "7px 52px 7px 16px", textAlign: "left", background: theme.bg, backdropFilter: "blur(10px)", borderBottom: `1px solid ${theme.border}`, boxShadow: scrolled ? "0 4px 14px rgba(0,0,0,0.07)" : "none", transition: "box-shadow 0.22s ease", zIndex: 5, display: "flex", alignItems: "center", justifyContent: "flex-start", overflow: "hidden" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ width: 30, height: 30, borderRadius: 8, background: theme.lift, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: `0 6px 16px ${tint(theme.lift, 0.28)}` }}>
+            <svg width="20" height="20" viewBox="0 0 512 512" aria-hidden="true">
+              <g fill={theme.isDark ? "#0A0A0A" : "#0A0A0A"}>
+                <rect x="168" y="150" width="38" height="212" rx="14" />
+                <rect x="306" y="150" width="38" height="212" rx="14" />
+                <rect x="168" y="237" width="176" height="38" rx="10" />
+                <rect x="128" y="192" width="28" height="128" rx="12" />
+                <rect x="356" y="192" width="28" height="128" rx="12" />
+              </g>
+            </svg>
+          </div>
           <div>
-            <div style={{ fontSize: 17, lineHeight: 1.02, fontWeight: 850, letterSpacing: "-0.045em", fontFamily: MASTHEAD_FONT_STACK, color: theme.text }}>Hybrid Log</div>
-            
+            <div style={{ fontSize: 18, lineHeight: 1.0, fontWeight: 600, fontStyle: "italic", letterSpacing: "-0.01em", fontFamily: SERIF_FONT_STACK, color: theme.text }}>Hybrid Log</div>
+            {(() => {
+              const now = nowDate();
+              const dayN = settings.startDate ? Math.max(0, Math.round((now - parseLocalDate(settings.startDate)) / 86400000)) : null;
+              const wd = ["SUN","MON","TUE","WED","THU","FRI","SAT"][now.getDay()];
+              const mo = ["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"][now.getMonth()];
+              const dd = String(now.getDate()).padStart(2, "0");
+              return (
+                <div style={{ fontSize: 9.5, letterSpacing: "0.16em", fontFamily: MONO_FONT_STACK, color: theme.textFaint, marginTop: 3, fontWeight: 500 }}>
+                  {dayN != null ? `DAY ${dayN} · ` : ""}{wd} {dd} {mo}
+                </div>
+              );
+            })()}
           </div>
         </div>
         <div style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", display: "flex", gap: 2 }}>
-          {showScrollTop && (
+          {showScrollTop && tab !== "today" && (
             <button
               onClick={scrollActiveTabToTop}
               aria-label="Scroll to top"
               title={t("상단으로", "Back to top")}
-              style={{ width: 36, height: 36, padding: 0, borderRadius: 12, cursor: "pointer", background: "transparent", border: "none", color: theme.textDim, display: "flex", alignItems: "center", justifyContent: "center" }}
+              style={{ width: 36, height: 36, padding: 0, borderRadius: 2, cursor: "pointer", background: "transparent", border: "none", color: theme.textDim, display: "flex", alignItems: "center", justifyContent: "center" }}
             >
-              <ChevronUp size={17} />
+              <ChevronUp size={16} />
             </button>
           )}
           <button
             onClick={() => setShowSettingsSheet(true)}
             aria-label="Settings"
             title={t("설정", "Settings")}
-            style={{ width: 36, height: 36, padding: 0, borderRadius: 12, cursor: "pointer", background: "transparent", border: "none", color: theme.textDim, display: "flex", alignItems: "center", justifyContent: "center" }}
+            style={{ width: 36, height: 36, padding: 0, borderRadius: 2, cursor: "pointer", background: "transparent", border: "none", color: theme.textDim, display: "flex", alignItems: "center", justifyContent: "center" }}
           >
             <Settings2 size={18} />
           </button>
@@ -6671,7 +7885,7 @@ export default function App() {
       </div>
 
       {err && (
-        <div style={{ margin: "8px 16px 0", background: tint(theme.danger, 0.14), border: `1px solid ${theme.danger}`, borderRadius: 12, padding: "8px 12px", fontSize: 12, color: theme.danger, display: "flex", justifyContent: "space-between" }}>
+        <div style={{ margin: "8px 16px 0", background: tint(theme.danger, 0.14), border: `1px solid ${theme.danger}`, borderRadius: 2, padding: "8px 12px", fontSize: 12, color: theme.danger, display: "flex", justifyContent: "space-between" }}>
           {err}
           <button onClick={() => setErr(null)} style={{ background: "none", border: "none", color: theme.danger, cursor: "pointer" }}><X size={13} /></button>
         </div>
@@ -6682,24 +7896,38 @@ export default function App() {
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
-        onTouchCancel={handleTouchEnd}
+        onTouchCancel={handleTouchCancel}
+        onClickCapture={(e) => { if (suppressClickRef.current) { e.preventDefault(); e.stopPropagation(); } }}
         style={{ flex: 1, overflow: "hidden", maxWidth: 520, width: "100%", margin: "0 auto", position: "relative", touchAction: "pan-y" }}
       >
         <div style={{
           display: "flex",
           height: "100%",
           width: trackWidth * tabs.length,
-          transform: `translateX(${-tabIndex * trackWidth + dragPx}px)`,
+          transform: `translate3d(${-tabIndex * trackWidth + dragPx}px, 0, 0)`,
+          willChange: "transform",
           transition: live ? "none" : "transform 0.32s cubic-bezier(0.22, 1, 0.36, 1)",
         }}>
           {tabs.map((tb) => (
             <div key={tb.id}
+              data-tab-id={tb.id}
               ref={(el) => { slideRefs.current[tb.id] = el; }}
-              onScroll={(e) => { if (tb.id === tab) setShowScrollTop(e.currentTarget.scrollTop > 150); }}
-              style={{ width: trackWidth, flexShrink: 0, height: "100%", overflowY: "auto", boxSizing: "border-box", padding: 16, paddingBottom: "calc(120px + env(safe-area-inset-bottom))", scrollPaddingBottom: 180, overscrollBehavior: "contain", touchAction: "pan-y" }}>
-              {tb.id === "today" && <TodayTab settings={settings} bodycomp={bodycomp} recentAvgSteps={recentAvgSteps} currentSteps={currentSteps} stepTrackingEnabled={stepTrackingEnabled} goToTab={goToTab} openActView={openActView} workouts={workouts} nutrition={nutrition} dayLogs={dayLogs} />}
-              {tb.id === "act" && <ActTab workouts={workouts} setWorkouts={setWorkouts} programs={programs} bodycomp={bodycomp} setBodycomp={setBodycomp} dayLogs={dayLogs} setDayLogs={setDayLogs} initialView={actInitialView} onConsumedInitialView={() => setActInitialView(null)} resetSignal={actResetSignal} onViewChange={setActCurrentView} currentSteps={currentSteps} stepTrackingEnabled={stepTrackingEnabled} />}
-              {tb.id === "eat" && <NutritionTab settings={settings} bodycomp={bodycomp} workouts={workouts} nutrition={nutrition} setNutrition={setNutrition} customFoods={customFoods} setCustomFoods={setCustomFoods} recentAvgSteps={recentAvgSteps} resetSignal={eatResetSignal} />}
+              onScroll={(e) => { if (tb.id === tab) { setScrolled(e.currentTarget.scrollTop > 4); if (tb.id !== "today") setShowScrollTop(e.currentTarget.scrollTop > 150); } }}
+              style={{
+                width: trackWidth,
+                flexShrink: 0,
+                height: "100%",
+                overflowY: tb.id === "today" ? "hidden" : "auto",
+                boxSizing: "border-box",
+                padding: tb.id === "today" ? "10px 16px" : 16,
+                paddingBottom: tb.id === "today" ? "calc(78px + env(safe-area-inset-bottom))" : "calc(120px + env(safe-area-inset-bottom))",
+                scrollPaddingBottom: tb.id === "today" ? 0 : 180,
+                overscrollBehavior: "contain",
+                touchAction: "pan-y",
+              }}>
+              {tb.id === "today" && <TodayTab settings={settings} bodycomp={bodycomp} recentAvgSteps={recentAvgSteps} currentSteps={currentSteps} goToTab={goToTab} openActView={openActView} workouts={workouts} nutrition={nutrition} dayLogs={dayLogs} setDayLogs={setDayLogs} weekPlan={weekPlan} programs={programs} />}
+              {tb.id === "act" && <ActTab isActive={tb.id === tab} workouts={workouts} setWorkouts={setWorkouts} programs={programs} weekPlan={weekPlan} bodycomp={bodycomp} setBodycomp={setBodycomp} dayLogs={dayLogs} setDayLogs={setDayLogs} initialView={actInitialView} onConsumedInitialView={() => setActInitialView(null)} resetSignal={actResetSignal} onViewChange={setActCurrentView} currentSteps={currentSteps} />}
+              {tb.id === "eat" && <NutritionTab isActive={tb.id === tab} settings={settings} onSaveSettings={saveSettings} bodycomp={bodycomp} workouts={workouts} nutrition={nutrition} setNutrition={setNutrition} customFoods={customFoods} setCustomFoods={setCustomFoods} recentAvgSteps={recentAvgSteps} resetSignal={eatResetSignal} />}
               {tb.id === "plan" && <PlanTab settings={settings} onSaveSettings={saveSettings} bodycomp={bodycomp} nutrition={nutrition} workouts={workouts} programs={programs} weekPlan={weekPlan} setWeekPlan={setWeekPlan} setPrograms={setPrograms} recentAvgSteps={recentAvgSteps} tdeeHistory={tdeeHistory} setTdeeHistory={setTdeeHistory} resetSignal={planResetSignal} />}
               {tb.id === "progress" && <ProgressTab settings={settings} onSaveSettings={saveSettings} bodycomp={bodycomp} setBodycomp={setBodycomp} nutrition={nutrition} workouts={workouts} weekPlan={weekPlan} tdeeHistory={tdeeHistory} setTdeeHistory={setTdeeHistory} recentAvgSteps={recentAvgSteps} />}
             </div>
@@ -6707,10 +7935,8 @@ export default function App() {
         </div>
       </div>
 
-      {showPatchNotes && <PatchNotesDialog onClose={closePatchNotes} />}
-
       <SettingsSheet open={showSettingsSheet} onClose={() => setShowSettingsSheet(false)}>
-        <SettingsTab settings={settings} onSaveSettings={saveSettings} workouts={workouts} nutrition={nutrition} bodycomp={bodycomp} programs={programs} onShowIntro={() => setShowIntroAgain(true)} onShowPatchNotes={() => setShowPatchNotes(true)} />
+        <SettingsTab settings={settings} onSaveSettings={saveSettings} workouts={workouts} nutrition={nutrition} bodycomp={bodycomp} programs={programs} onShowIntro={() => setShowIntroAgain(true)} />
       </SettingsSheet>
 
       <div style={{
@@ -6719,19 +7945,21 @@ export default function App() {
         display: "flex", justifyContent: "center",
         boxShadow: "0 -12px 28px rgba(0,0,0,0.28)",
       }}>
-        <div style={{ display: "flex", width: "100%", maxWidth: 520, padding: "4px 6px env(safe-area-inset-bottom)" }}>
+        <div style={{ display: "flex", width: "100%", maxWidth: 520, padding: "0 6px env(safe-area-inset-bottom)" }}>
           {tabs.map((tabItem) => {
             const Icon = tabItem.icon;
             const active = tab === tabItem.id;
             return (
               <button key={tabItem.id} onClick={() => goToTab(tabItem.id, { reset: ["act", "eat", "plan"].includes(tabItem.id) })}
                 style={{
-                  flex: 1, background: active ? `linear-gradient(135deg, ${tint(tabItem.color || theme.ring, 0.24)}, ${theme.darkPanel2 || theme.surface})` : "transparent", border: active ? `1px solid ${tint(tabItem.color || theme.ring, 0.38)}` : "1px solid transparent", padding: "8px 4px 9px",
-                  display: "flex", flexDirection: "column", alignItems: "center", gap: 3,
-                  color: active ? (tabItem.color || theme.ring) : theme.textFaint, cursor: "pointer", borderRadius: 13,
+                  flex: 1, background: "transparent", border: "none", padding: "10px 4px 11px",
+                  position: "relative",
+                  display: "flex", flexDirection: "column", alignItems: "center", gap: 5,
+                  color: active ? theme.lift : theme.textFaint, cursor: "pointer",
                 }}>
-                <Icon size={18} style={{ animation: active ? "hlTabBounce 0.35s ease" : "none" }} />
-                <span style={{ fontSize: 12, fontWeight: active ? 700 : 500 }}>{tabItem.label}</span>
+                <div style={{ position: "absolute", top: 0, left: "50%", transform: "translateX(-50%)", width: active ? 22 : 0, height: 2, background: theme.lift, transition: "width 0.2s ease", borderRadius: 1 }} />
+                <Icon size={17} strokeWidth={active ? 2.4 : 1.8} style={{ animation: active ? "hlTabBounce 0.35s ease" : "none" }} />
+                <span style={{ fontSize: 9.5, fontWeight: active ? 700 : 500, letterSpacing: "0.12em", textTransform: "uppercase", fontFamily: MONO_FONT_STACK }}>{tabItem.label}</span>
               </button>
             );
           })}

@@ -1,0 +1,33 @@
+/* Self-hosted fonts (bundled via @fontsource) so the app renders its full
+   editorial type system OFFLINE inside the Capacitor WebView — no reliance
+   on the Google Fonts CDN, which fails without a network connection.
+
+   CJK fonts are large, so Korean glyphs are provided ONLY by IBM Plex Sans KR
+   (the Korean UI face), trimmed to the weights actually used. The editorial
+   serif (Newsreader) is latin-only; Korean titles fall back to the sans face
+   rather than shipping a second full hangul serif (which alone was ~20MB). */
+
+/* ---- Inter: primary sans (numerals, body, UI) ---- */
+@import "@fontsource/inter/400.css";
+@import "@fontsource/inter/500.css";
+@import "@fontsource/inter/600.css";
+@import "@fontsource/inter/700.css";
+@import "@fontsource/inter/800.css";
+@import "@fontsource/inter/900.css";
+
+/* ---- IBM Plex Sans KR: Korean body/UI (latin + korean subsets) ---- */
+@import "@fontsource/ibm-plex-sans-kr/400.css";
+@import "@fontsource/ibm-plex-sans-kr/600.css";
+@import "@fontsource/ibm-plex-sans-kr/700.css";
+@import "@fontsource/ibm-plex-sans-kr/korean-400.css";
+@import "@fontsource/ibm-plex-sans-kr/korean-600.css";
+@import "@fontsource/ibm-plex-sans-kr/korean-700.css";
+
+/* ---- JetBrains Mono: uppercase context labels (latin only) ---- */
+@import "@fontsource/jetbrains-mono/500.css";
+@import "@fontsource/jetbrains-mono/600.css";
+@import "@fontsource/jetbrains-mono/700.css";
+
+/* ---- Newsreader (variable, incl. italic): editorial titles (latin) ---- */
+@import "@fontsource-variable/newsreader/wght.css";
+@import "@fontsource-variable/newsreader/wght-italic.css";

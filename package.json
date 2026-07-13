@@ -7,9 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "android:sync": "vite build && npx cap sync android",
-    "build:web": "vite build",
-    "preview:web": "vite preview --host 0.0.0.0"
+    "android:sync": "vite build && npx cap sync android"
   },
   "dependencies": {
     "@capacitor/android": "^6.2.0",
@@ -19,6 +17,10 @@
     "@capacitor/haptics": "^6.0.1",
     "@capacitor/local-notifications": "^6.1.0",
     "@capacitor/status-bar": "^6.0.1",
+    "@fontsource-variable/newsreader": "^5.2.10",
+    "@fontsource/ibm-plex-sans-kr": "^5.2.8",
+    "@fontsource/inter": "^5.2.8",
+    "@fontsource/jetbrains-mono": "^5.2.8",
     "lucide-react": "^0.383.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
@@ -26,7 +28,6 @@
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.1",
-    "vite": "^5.4.0",
-    "vite-plugin-pwa": "^0.20.5"
+    "vite": "^5.4.0"
   }
 }

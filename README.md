@@ -103,8 +103,174 @@ IndexedDB(`idb` 라이브러리 추천)로 바꾸면 나머지 코드는 손댈 
 
 
 
-## Changelog
+## 0.13.3 fix pass
 
-- Added body fat direct input / visual estimate / skip flow.
-- Body-fat estimate source and confidence are stored with body composition entries.
-- Added web-only patch notes dialog for GitHub Pages updates.
+- Restored TDEE fallback calculation when age/height are incomplete.
+- Separated cut-tier calorie targets and macros.
+- Fixed macro progress bars to show consumed percentage and over-target state.
+- Synced Nutrition to the effective/calibrated TDEE.
+- Fixed latest same-day body measurement selection and chart deduplication.
+- Fixed Today's Workout to open the scheduled weekly-plan program.
+- Hardened manual-entry buttons against swipe/touch interference.
+- Aligned calorie labels and removed unsupported water-tracking copy.
+
+## 0.14.0 comprehensive workout UX patch
+
+- Per-exercise warm-up set counts in the program editor.
+- Dial-style weight/reps pickers, weight-first input order, and per-set target-rep override.
+- Warm-up vs working-set metadata and corrected progressive-overload failure handling.
+- Smooth requestAnimationFrame rest ring.
+- Native Android foreground rest timer with ongoing countdown notification, Skip action, and four sound modes.
+- More anatomical front/back muscle map.
+- Workout edit auto-scroll, compact Today layout, step-goal success colour, session-complete state, and rest-day icon.
+- One-use-per-week cheat-day toggle with weekly-budget-preserving targets.
+- Card-level horizontal tab swiping with direct transform updates for smoother gestures.
+
+## 0.14.1
+
+- Added storage v5 migrations for programs, exercise IDs, warm-up sets, and set metadata.
+- Fixed full reset to clear progressive overload, timer sound, and step history.
+- Fixed weekly cheat-day usage so toggling it off cannot reset the weekly limit.
+- Synced native rest-timer notification state with the in-app timer.
+- Rest timer now persists its end time and can recover after service recreation.
+- Separated rest-timer notification permission from activity-recognition permission.
+- Fixed exercise history matching to prefer stable exercise IDs.
+- Added progressive warm-up weight suggestions.
+- Improved number wheels with current-value auto-scroll and quick +/- controls.
+- Fixed working-set numbering when warm-up sets are present.
+- Added touch-cancel cleanup and vertical-scroll locking during horizontal tab swipes.
+
+## 0.14.2
+
+- Fixed runtime crash caused by missing horizontal swipe lock refs.
+- Added `dragScrollTopRef` and `dragLockedSlideRef` declarations.
+
+## 0.14.3
+
+- Changed Today into a fixed fullscreen dashboard with vertical scrolling disabled.
+- Added height-responsive compact layouts for shorter phones.
+- Kept horizontal tab swiping available on Today.
+- Other tabs continue to use independent vertical scrolling.
+
+## 0.14.7
+
+- Minimum-intake floor notes now use the danger/warning color.
+- Added a warning icon and stronger weight only when the intake floor is reached.
+- Other safety-cap notes retain the neutral secondary style.
+
+## 0.14.8
+
+- Clean rebuild release to eliminate stale Android web assets.
+- Verified horizontal swipe lock refs are declared.
+- Android assets were regenerated from the current source.
+
+## 0.14.9
+
+- Added Settings → Data → Backup & Restore.
+- Export JSON downloads a full local-data backup.
+- Import JSON restores a previous backup after confirmation and reloads the app.
+- Backup/reset key list now includes storageVersion.
+
+## 0.14.10
+
+- Fixed cheat-day toggle crash in Eat by passing onSaveSettings into NutritionTab.
+- Reworked JSON export for Android WebView: share/download attempt plus visible JSON fallback and copy button.
+- Import JSON remains file-based with confirmation and reload.
+
+## 0.14.11
+
+- Cheat-day target is now used consistently for Eat remaining-calorie display.
+- Active cheat day is automatically reclaimed around 23:59 if normal calories were not exceeded.
+- Turning off an active cheat day now fully restores the weekly cheat-day allowance.
+
+## 0.14.12
+
+- Fixed runtime TDZ error from the cheat-day auto-reclaim effect.
+- Moved the app-level 23:59 reclaim watcher after recentAvgSteps is initialized.
+
+## 0.14.13
+
+- Nutrition entries now support meal categories: breakfast, lunch, dinner, snack, and other.
+- Eat history groups items under meal categories instead of treating every item as a separate meal.
+- Today meal count now counts used meal categories, while still showing item count.
+- Food Calculator and Manual Entry both include a meal category selector.
+- Storage migration v6 adds mealCategory to existing nutrition entries.
+
+## 0.14.14
+
+- Guided workout setup now remembers the last settings per program.
+- Rest time, weight increment, rest sound, and target-rep overrides are restored next time the same guided program starts.
+- Guide settings are stored inside progressiveOverload and included in JSON backups.
+
+## 0.14.15
+
+- Editing existing nutrition entries now opens as a modal popup instead of moving the user to an inline form.
+- Editing existing workout entries now opens as a modal popup.
+- Removed automatic scroll-to-top behavior for workout edits.
+
+## 0.14.16
+
+- Fixed edit modal layering bug where the blur backdrop covered the edit form.
+- Edit backdrop now stays in the same stacking context as the edit card.
+- Edit cards stop pointer events from bubbling to the backdrop.
+
+## 0.14.18
+
+- Reverted edit popup layout to the 0.14.16 style.
+- Fixed horizontal clipping by constraining modal width to the viewport.
+- Edit forms now use a single-column grid on small modal screens.
+- Workout subtype buttons wrap in edit mode instead of overflowing.
+
+## 0.14.19
+
+- Kept the 0.14.18 edit popup design.
+- Reduced popup vertical height by increasing top/bottom margins.
+- Added a viewport-based maxHeight so content scrolls inside instead of clipping vertically.
+
+## 0.14.20
+
+- Made edit popups more compact so normal edits fit in one view without scrolling.
+- Reduced modal height and input density while keeping the 0.14.18/0.14.19 visual style.
+- Nutrition edit keeps a two-column compact grid.
+- Workout edit hides detailed set editing behind a collapsed section so the main edit form fits at a glance.
+
+## 0.14.21
+
+- Fixed workout edit popup rendering separately from the animated-height container.
+- Cardio workout edits now always show editable fields, even when older entries lack duration metadata.
+- Added safer edit fallbacks for workout type/subtype and exercise loading.
+
+## 0.14.22
+
+- Workout edit modal no longer remains visible over other tabs.
+- Act and Eat edit popups close when their tab becomes inactive.
+- Edit popups now block background scroll, wheel, touchmove, and tab-swipe gestures.
+- Edit cards are marked as dialogs/no-swipe zones and modal overflow is locked.
+
+## 0.14.24
+
+- Recent Activity items in Act now open the workout edit modal directly.
+- Tapping a recent workout no longer navigates into the Training/Cardio start screen first.
+- Added a modal-only WorkoutsTab path so direct edits can reuse the same save/delete/edit logic without rendering the full workout screen.
+
+## 0.14.25
+
+- Fixed stale Recent Activity edit requests reopening when entering Today's Session afterward.
+- Act sub-screen navigation now clears any overview direct-edit workout id before rendering Training/Cardio.
+- Returning from Act sub-screens also clears direct-edit state.
+
+## 0.14.26
+
+- Added Rest Day Credit without creating fake workout records.
+- Home now shows Today's Recovery on planned rest days.
+- Rest Day completion is stored on dayLogs as restCompleted and preserves normal check-in data.
+- Consistency streak now counts planned workout completion plus rest-day confirmation/check-in.
+- Workout streak remains separate and only counts actual lift/run workout days.
+- Rest completion appears in Home checklist but does not show in Recent Activity as a workout.
+
+## 0.14.40 Web
+
+- Ported the Android 0.14.40 plan-edit crashfix codebase to the GitHub Pages web build.
+- Uses `/hybrid-log/` Vite base for the project page.
+- Hides Android-only automatic step counter UI and keeps TDEE activity level based on the manual Activity setting.
+- Native Android folder is omitted from this web package.

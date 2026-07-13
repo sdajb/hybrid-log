@@ -1,12 +1,9 @@
 import "./storagePolyfill.js";
+import "./fonts.css";
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App.jsx";
 
-
-function isCapacitorRuntime() {
-  return !!window.Capacitor || window.location.origin === "https://localhost";
-}
 
 async function clearStaleServiceWorkers() {
   try {
@@ -23,26 +20,7 @@ async function clearStaleServiceWorkers() {
   }
 }
 
-async function setupWebAppServiceWorker() {
-  if (!("serviceWorker" in navigator)) return;
-
-  if (isCapacitorRuntime()) {
-    // Capacitor bundles the files locally. Service workers under
-    // https://localhost can fail in Android/iOS WebViews, so keep native
-    // builds service-worker-free.
-    await clearStaleServiceWorkers();
-    return;
-  }
-
-  try {
-    const base = import.meta.env.BASE_URL || "/";
-    await navigator.serviceWorker.register(`${base}sw.js`, { scope: base });
-  } catch (e) {
-    console.warn("Service worker registration skipped", e);
-  }
-}
-
-setupWebAppServiceWorker();
+clearStaleServiceWorkers();
 
 class RuntimeErrorBoundary extends React.Component {
   constructor(props) {
