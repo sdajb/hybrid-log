@@ -135,3 +135,11 @@ Existing local data should migrate where possible, but if old development data c
 Hybrid Log Web 0.14.40
 Based on Android 0.14.40 plan edit crash fix
 ```
+
+## 0.14.41 Web PWA Shortcut Fix
+
+- Added a web app manifest for GitHub Pages.
+- Fixed icon paths to use `/hybrid-log/` instead of the site root.
+- Set PWA `start_url` and `scope` to `/hybrid-log/`.
+- This prevents desktop/home-screen shortcuts from opening the wrong path and triggering a script error.
+

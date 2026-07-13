@@ -279,3 +279,10 @@ IndexedDB(`idb` 라이브러리 추천)로 바꾸면 나머지 코드는 손댈 
 
 - [Hybrid Log 0.14.40 Patch Notes](./PATCH_NOTES_0.14.40.md)
 
+## Latest Web Patch Notes
+
+- [Hybrid Log Web 0.14.41 Patch Notes](./PATCH_NOTES_0.14.41.md)
+- Live page after deploy: `https://sdajb.github.io/hybrid-log/patch-notes-0.14.41.html`
+
+Important: after the PWA shortcut fix, delete the old desktop/home-screen shortcut and create it again.
+

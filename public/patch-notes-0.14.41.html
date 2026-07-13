@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0A0A0A" />
+  <title>Hybrid Log 0.14.41 Patch Notes</title>
+  <link rel="icon" type="image/png" sizes="192x192" href="/hybrid-log/icon-192.png" />
+  <link rel="apple-touch-icon" href="/hybrid-log/apple-touch-icon.png" />
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #F5F1E8;
+      --paper: #FFF9EC;
+      --ink: #16130E;
+      --muted: #6E665A;
+      --line: #D7C8AE;
+      --accent: #B46A2A;
+      --code: #EFE2CD;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.6;
+    }
+    main {
+      width: min(820px, calc(100% - 32px));
+      margin: 32px auto;
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 28px;
+      box-shadow: 0 12px 32px rgba(0,0,0,0.08);
+    }
+    h1, h2, h3 { line-height: 1.2; }
+    h1 { font-size: 28px; margin: 0 0 8px; }
+    h2 { font-size: 20px; margin-top: 32px; border-top: 1px solid var(--line); padding-top: 22px; }
+    h3 { font-size: 16px; margin-top: 22px; }
+    p, li { color: var(--ink); }
+    .meta { color: var(--muted); margin-bottom: 24px; }
+    code, pre {
+      background: var(--code);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    code { padding: 2px 6px; }
+    pre { padding: 12px; overflow-x: auto; }
+    a { color: var(--accent); font-weight: 700; }
+    .important {
+      border: 1px solid #C66A32;
+      background: #FFF0DF;
+      padding: 14px 16px;
+      border-radius: 14px;
+      margin: 18px 0;
+    }
+    .back {
+      display: inline-block;
+      margin-top: 28px;
+      color: var(--accent);
+      text-decoration: none;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Hybrid Log Web 0.14.41 Patch Notes</h1>
+    <p class="meta">PWA shortcut and visible patch notes fix</p>
+
+    <h2>Summary</h2>
+    <p>This release fixes the GitHub Pages desktop/home-screen shortcut issue.</p>
+    <p>The app itself was working from the normal browser URL, but shortcuts created on the desktop or home screen could open with the wrong path or cached metadata. That could cause a generic <code>Script error</code>.</p>
+
+    <h2>What Changed</h2>
+
+    <h3>1. PWA / Desktop Shortcut Fix</h3>
+    <p>Added a proper web app manifest for the GitHub Pages deployment.</p>
+    <pre>start_url: /hybrid-log/
+scope: /hybrid-log/</pre>
+
+    <h3>2. Icon Path Fix</h3>
+    <p>Shortcut and install icons now use GitHub Pages-safe paths:</p>
+    <pre>/hybrid-log/icon-192.png
+/hybrid-log/icon-512.png
+/hybrid-log/icon-maskable-192.png
+/hybrid-log/icon-maskable-512.png
+/hybrid-log/apple-touch-icon.png</pre>
+
+    <h3>3. Visible Patch Notes Page</h3>
+    <p>Patch notes are now included as a static page that can be opened directly:</p>
+    <pre>https://sdajb.github.io/hybrid-log/patch-notes-0.14.41.html</pre>
+
+    <h2>Required After Updating</h2>
+    <div class="important">
+      <strong>Important:</strong> delete the old desktop/home-screen shortcut and create it again.
+    </div>
+    <p>If you already created a desktop or home-screen shortcut before this patch, the old shortcut may keep the previous path, icon metadata, or cached manifest. Updating the website alone may not update an already-created shortcut.</p>
+
+    <p>Recommended steps:</p>
+    <ol>
+      <li>Delete the existing Hybrid Log shortcut from desktop/home screen.</li>
+      <li>Open <code>https://sdajb.github.io/hybrid-log/</code> in the browser.</li>
+      <li>Hard refresh once if needed.</li>
+      <li>Create the shortcut / install the app again.</li>
+    </ol>
+
+    <h2>Notes</h2>
+    <ul>
+      <li>This does not change the diet engine.</li>
+      <li>This does not change workout logic.</li>
+      <li>Web and Android data are still separate because storage is local.</li>
+      <li>Existing browser data should remain, but shortcut metadata may need to be recreated.</li>
+    </ul>
+
+    <h2>Version</h2>
+    <pre>Hybrid Log Web 0.14.41
+PWA shortcut and visible patch notes fix</pre>
+
+    <a class="back" href="/hybrid-log/">← Back to Hybrid Log</a>
+  </main>
+</body>
+</html>
