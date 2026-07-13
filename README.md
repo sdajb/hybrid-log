@@ -274,3 +274,8 @@ IndexedDB(`idb` 라이브러리 추천)로 바꾸면 나머지 코드는 손댈 
 - Uses `/hybrid-log/` Vite base for the project page.
 - Hides Android-only automatic step counter UI and keeps TDEE activity level based on the manual Activity setting.
 - Native Android folder is omitted from this web package.
+
+## Latest Patch Notes
+
+- [Hybrid Log 0.14.40 Patch Notes](./PATCH_NOTES_0.14.40.md)
+
