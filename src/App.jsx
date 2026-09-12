@@ -17,12 +17,12 @@ import { registerPlugin } from "@capacitor/core";
 // android/app/src/main/java/.../StepCounterPlugin.java). No npm package;
 // registerPlugin() bridges to it by name. Safely rejects in the browser
 // preview / artifact (no native bridge), which callers below handle.
-const BUILD_RELEASE = "0.15.4-web";
+const BUILD_RELEASE = "0.15.5-web";
 const StepCounterPlugin = registerPlugin("StepCounter");
 const RestTimerPlugin = registerPlugin("RestTimer");
 const WEB_BUILD = true;
 const PORTFOLIO_DEMO = true;
-const PORTFOLIO_DEMO_SEED_KEY = "hybridLog.portfolioDemoSeeded.v1";
+const PORTFOLIO_DEMO_SEED_KEY = "hybridLog.portfolioDemoSeeded.v2";
 const PORTFOLIO_TOUR_SEEN_KEY = "hybridLog.portfolioTourSeen.v1";
 const PATCH_NOTES_URL = "/hybrid-log/patch-notes.html";
 const PATCH_NOTES_SEEN_KEY = `hybridLog.patchNotesSeen.${BUILD_RELEASE}`;
@@ -1198,8 +1198,9 @@ function makeDemoExercise(id, name, nameEn, muscle, sets) {
   return {
     id,
     exerciseId: id,
-    name,
-    nameEn,
+    name: nameEn || name,
+    nameKo: name,
+    nameEn: nameEn || name,
     muscle,
     sets: sets.map(([weight, reps], index) => ({
       weight,
@@ -1425,7 +1426,15 @@ function buildPortfolioDemoData() {
     nutrition,
     tdeeHistory,
     customFoods: [],
-    programs: DEFAULT_PROGRAMS,
+    programs: DEFAULT_PROGRAMS.map((program) => ({
+      ...program,
+      exercises: (program.exercises || []).map((ex) => ({
+        ...ex,
+        nameKo: ex.nameKo || ex.name,
+        name: ex.nameEn || ex.name,
+        nameEn: ex.nameEn || ex.name,
+      })),
+    })),
     weekPlan,
     dayLogs,
   };
@@ -1474,7 +1483,11 @@ async function ensurePortfolioDemoData() {
     (!nutrition || nutrition.length === 0) &&
     (!settings?.hasOnboarded || settings?.userName === "USERNAME");
 
-  if (looksFresh) {
+  const looksLikePortfolioDemo =
+    Array.isArray(workouts) &&
+    workouts.some((w) => String(w?.id || "").startsWith("demo_"));
+
+  if (looksFresh || looksLikePortfolioDemo) {
     await savePortfolioDemoData();
     return true;
   }

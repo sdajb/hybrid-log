@@ -454,3 +454,9 @@ dist/ → GitHub Pages
 ```
 
 Do not commit generated root `assets/` or `dist/`.
+
+## 0.15.5 English Exercise Names
+
+Portfolio demo exercise names now use English as their primary display name.
+The demo seed schema moved to `v2`, automatically refreshing existing sample
+data once without touching non-demo user data.
