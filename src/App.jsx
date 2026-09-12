@@ -17,7 +17,7 @@ import { registerPlugin } from "@capacitor/core";
 // android/app/src/main/java/.../StepCounterPlugin.java). No npm package;
 // registerPlugin() bridges to it by name. Safely rejects in the browser
 // preview / artifact (no native bridge), which callers below handle.
-const BUILD_RELEASE = "0.15.2-web";
+const BUILD_RELEASE = "0.15.3-web";
 const StepCounterPlugin = registerPlugin("StepCounter");
 const RestTimerPlugin = registerPlugin("RestTimer");
 const WEB_BUILD = true;

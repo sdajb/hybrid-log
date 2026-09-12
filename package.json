@@ -1,14 +1,13 @@
 {
   "name": "hybrid-log",
   "private": true,
-  "version": "0.15.2",
+  "version": "0.15.3",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "node scripts/build-web-root.mjs",
+    "build": "vite build",
     "preview": "vite preview",
-    "android:sync": "vite build && npx cap sync android",
-    "build:vite": "vite build"
+    "android:sync": "vite build && npx cap sync android"
   },
   "dependencies": {
     "@capacitor/android": "^6.2.0",

@@ -31,8 +31,22 @@ jobs:
       - name: Install dependencies
         run: npm install --no-package-lock
 
-      - name: Build web app
+      - name: Build
         run: npm run build
+
+      - name: Verify Pages artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f dist/index.html
+          test -f dist/patch-notes.html
+          test -n "$(find dist/assets -maxdepth 1 -type f -name 'index-*.js' -print -quit)"
+          grep -q '/hybrid-log/assets/index-' dist/index.html
+          if grep -q '/src/main.jsx' dist/index.html; then
+            echo "ERROR: dist/index.html still points to Vite source."
+            exit 1
+          fi
+          echo "Verified dist/index.html and production JS bundle."
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v4

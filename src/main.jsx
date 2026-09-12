@@ -140,4 +140,6 @@ ReactDOM.createRoot(document.getElementById("root")).render(
       <App />
     </RuntimeErrorBoundary>
   </React.StrictMode>
-);
+)
+
+try { window.__HYBRID_LOG_BOOT_OK__?.(); } catch (e) {};

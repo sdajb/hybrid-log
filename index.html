@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ko">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
@@ -28,10 +28,71 @@
       * { scrollbar-width: none !important; -ms-overflow-style: none !important; }
       *::-webkit-scrollbar { display: none !important; width: 0 !important; height: 0 !important; }
     </style>
-    <script type="module" crossorigin src="/hybrid-log/assets/index-RVMueofT.js"></script>
-    <link rel="stylesheet" crossorigin href="/hybrid-log/assets/index-BMXVAo0L.css">
   </head>
   <body style="margin:0;">
-    <div id="root"></div>
+    <div id="root">
+      <div id="hybrid-log-boot" style="
+        min-height:100dvh;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        box-sizing:border-box;
+        padding:24px;
+        background:#0A0A0A;
+        color:#F5F5F3;
+        font-family:Inter,system-ui,-apple-system,sans-serif;
+      ">
+        <div style="width:min(420px,100%);">
+          <div style="font-size:11px;letter-spacing:.16em;color:#E6B22E;font-weight:800;margin-bottom:10px;">HYBRID LOG · PORTFOLIO DEMO</div>
+          <div style="font-family:Georgia,serif;font-size:28px;font-style:italic;line-height:1.05;margin-bottom:10px;">Loading Hybrid Log…</div>
+          <div id="hybrid-log-boot-detail" style="font-size:12px;line-height:1.55;color:#A8A8A4;">Preparing the interactive demo.</div>
+        </div>
+      </div>
+    </div>
+  
+    <script>
+      (function () {
+        var resolved = false;
+        var detailId = "hybrid-log-boot-detail";
+
+        function showBootError(message) {
+          if (resolved) return;
+          var detail = document.getElementById(detailId);
+          var boot = document.getElementById("hybrid-log-boot");
+          if (!detail || !boot) return;
+          detail.innerHTML =
+            '<strong style="color:#E5533B">Hybrid Log did not finish loading.</strong><br>' +
+            '<span style="display:block;margin-top:7px">' +
+            String(message || 'Unknown startup error')
+              .replace(/&/g, '&amp;')
+              .replace(/</g, '&lt;')
+              .replace(/>/g, '&gt;') +
+            '</span><br>' +
+            '<span style="color:#6E6E6A">Reload this page. If it persists, the deployed JavaScript bundle is not starting correctly.</span>';
+        }
+
+        window.__HYBRID_LOG_BOOT_OK__ = function () {
+          resolved = true;
+        };
+
+        window.addEventListener("error", function (event) {
+          var msg = event && (event.message || (event.error && event.error.message));
+          if (!msg && event && event.target && event.target.src) msg = "Failed to load: " + event.target.src;
+          showBootError(msg || "JavaScript failed during startup.");
+        }, true);
+
+        window.addEventListener("unhandledrejection", function (event) {
+          var reason = event && event.reason;
+          showBootError(reason && (reason.message || String(reason)) || "Unhandled startup promise rejection.");
+        });
+
+        window.setTimeout(function () {
+          if (!resolved && document.getElementById("hybrid-log-boot")) {
+            showBootError("Startup timed out before React mounted.");
+          }
+        }, 8000);
+      })();
+    </script>
+    <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

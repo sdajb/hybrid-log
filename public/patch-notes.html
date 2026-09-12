@@ -16,9 +16,14 @@
 </head>
 <body>
 <main>
-  <h1>Hybrid Log Web 0.15.2</h1>
-  <p class="meta">Portfolio Tour export hotfix</p>
+  <h1>Hybrid Log Web 0.15.3</h1>
+  <p class="meta">Clean GitHub Pages deployment</p>
 
+
+
+  <h2>0.15.3 deployment cleanup</h2>
+  <p>GitHub Pages now has one deployment path only: Vite source → <code>dist/</code> → GitHub Actions Pages. Old root-level production assets and the custom root-copy build wrapper were removed.</p>
+  <p>A startup fallback now displays a visible diagnostic instead of an empty page if the JavaScript bundle fails before React mounts.</p>
 
   <h2>0.15.2 hotfix</h2>
   <p>Fixed a root export issue that caused the deployed app to render a blank page even though the build succeeded. <code>App</code> is again the default React export; the Portfolio Tour remains a normal child component.</p>

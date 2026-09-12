@@ -442,3 +442,15 @@ export default function App() { ... }
 ```
 
 The Portfolio Tour is no longer accidentally exported as the root application.
+
+## 0.15.3 — GitHub Actions Pages only
+
+Web deployment now uses a single source of truth:
+
+```text
+npm install --no-package-lock
+npm run build
+dist/ → GitHub Pages
+```
+
+Do not commit generated root `assets/` or `dist/`.
