@@ -430,3 +430,15 @@ Replay:
 ```text
 Settings → Portfolio Demo → Replay Portfolio Tour
 ```
+
+## 0.15.2 Export Hotfix
+
+Fixed the 0.15.1 blank-screen regression:
+
+```jsx
+function PortfolioTour(...) { ... }
+
+export default function App() { ... }
+```
+
+The Portfolio Tour is no longer accidentally exported as the root application.
