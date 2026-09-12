@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#0A0A0A" />
-  <title>Hybrid Log 0.15.0 — Portfolio Demo</title>
+  <title>Hybrid Log 0.15.1 — Portfolio Tour</title>
   <style>
     :root{color-scheme:light;--bg:#F5F1E8;--paper:#FFF9EC;--ink:#16130E;--muted:#6E665A;--line:#D7C8AE;--accent:#B46A2A}
     *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;line-height:1.6}
@@ -16,22 +16,31 @@
 </head>
 <body>
 <main>
-  <h1>Hybrid Log Web 0.15.0</h1>
-  <p class="meta">Portfolio Demo release</p>
-  <h2>What changed</h2>
+  <h1>Hybrid Log Web 0.15.1</h1>
+  <p class="meta">Portfolio Tour release</p>
+
+  <h2>First-visit tour</h2>
+  <p>New visitors now get a short four-step product tour before exploring the interactive sample-data demo.</p>
+  <ol>
+    <li><strong>Hybrid Log</strong> — the product idea and Track → Plan → Learn → Adjust loop.</li>
+    <li><strong>Product Map</strong> — what TODAY, ACT, EAT, PLAN and PROGRESS each do.</li>
+    <li><strong>Build</strong> — React, Vite, Capacitor, local-first storage and core product logic.</li>
+    <li><strong>Demo Mode</strong> — explains the sample data and invites the visitor to explore.</li>
+  </ol>
+
+  <h2>One-time behaviour</h2>
+  <p>After the visitor selects <code>Skip</code> or <code>Explore Hybrid Log</code>, the tour is marked as seen and no longer opens automatically.</p>
+  <p>It can be replayed from <code>Settings → Portfolio Demo → Replay Portfolio Tour</code>.</p>
+
+  <h2>Still included</h2>
   <ul>
-    <li>English is the default language for fresh web visitors.</li>
-    <li>Fresh visitors automatically receive realistic sample data.</li>
-    <li>Today, Act, Eat, Plan and Progress are populated immediately.</li>
-    <li>Demo dates are relative to the current day.</li>
-    <li>The app is clearly marked <code>PORTFOLIO DEMO · SAMPLE DATA</code>.</li>
-    <li>The startup patch-note popup has been removed.</li>
-    <li>Settings includes <code>Reset Demo Data</code> and a compact tech summary.</li>
+    <li>English default for fresh visitors</li>
+    <li>Relative-date portfolio sample data</li>
+    <li>PORTFOLIO DEMO · SAMPLE DATA badge</li>
+    <li>Reset Demo Data</li>
+    <li>GitHub Pages / PWA safe-area support</li>
   </ul>
-  <h2>Demo coverage</h2>
-  <p>The sample dataset demonstrates nutrition tracking, strength and running logs, weekly planning, body composition trends, TDEE history and daily recovery/check-ins.</p>
-  <h2>Stack</h2>
-  <p>React · Vite · Capacitor · Local-first storage · Android + Web/PWA</p>
+
   <a class="back" href="/hybrid-log/">← Back to Hybrid Log</a>
 </main>
 </body>

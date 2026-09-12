@@ -17,12 +17,13 @@ import { registerPlugin } from "@capacitor/core";
 // android/app/src/main/java/.../StepCounterPlugin.java). No npm package;
 // registerPlugin() bridges to it by name. Safely rejects in the browser
 // preview / artifact (no native bridge), which callers below handle.
-const BUILD_RELEASE = "0.15.0-web";
+const BUILD_RELEASE = "0.15.1-web";
 const StepCounterPlugin = registerPlugin("StepCounter");
 const RestTimerPlugin = registerPlugin("RestTimer");
 const WEB_BUILD = true;
 const PORTFOLIO_DEMO = true;
 const PORTFOLIO_DEMO_SEED_KEY = "hybridLog.portfolioDemoSeeded.v1";
+const PORTFOLIO_TOUR_SEEN_KEY = "hybridLog.portfolioTourSeen.v1";
 const PATCH_NOTES_URL = "/hybrid-log/patch-notes.html";
 const PATCH_NOTES_SEEN_KEY = `hybridLog.patchNotesSeen.${BUILD_RELEASE}`;
 
@@ -6955,7 +6956,7 @@ function ProgressTab({ settings, onSaveSettings, bodycomp, setBodycomp, nutritio
   </div>;
 }
 
-function SettingsTab({ settings, onSaveSettings, workouts, nutrition, bodycomp, programs, onShowIntro }) {
+function SettingsTab({ settings, onSaveSettings, workouts, nutrition, bodycomp, programs, onShowIntro, onReplayPortfolioTour }) {
   const { lang, t, en } = useLang();
   const theme = useTheme();
   const [profileDraft, setProfileDraft] = useState({
@@ -7080,6 +7081,27 @@ function SettingsTab({ settings, onSaveSettings, workouts, nutrition, bodycomp, 
             REACT · VITE · CAPACITOR<br/>
             LOCAL-FIRST STORAGE · ANDROID + WEB/PWA
           </div>
+          <button
+            onClick={onReplayPortfolioTour}
+            style={{
+              width: "100%",
+              minHeight: 42,
+              borderRadius: 2,
+              border: `1px solid ${theme.border}`,
+              background: "transparent",
+              color: theme.text,
+              fontFamily: MONO_FONT_STACK,
+              fontSize: 11.5,
+              fontWeight: 800,
+              letterSpacing: "0.1em",
+              textTransform: "uppercase",
+              cursor: "pointer",
+              marginBottom: 8,
+            }}
+          >
+            {t("포트폴리오 투어 다시 보기", "Replay Portfolio Tour")}
+          </button>
+
           <button
             onClick={async () => {
               const ok = window.confirm(t(
@@ -7795,10 +7817,260 @@ function EmptyState({ text, icon: Icon, actionLabel, onAction }) {
 /* ---------------------------------------------------------
    APP ROOT
 --------------------------------------------------------- */
-export default function App() {
+export default 
+function PortfolioTour({ open, onClose }) {
+  const { t } = useLang();
+  const theme = useTheme();
+  const [step, setStep] = useState(0);
+
+  useEffect(() => {
+    if (open) setStep(0);
+  }, [open]);
+
+  if (!open) return null;
+
+  const featureRows = [
+    ["TODAY", t("칼로리 · 운동 · 회복 · 체성분을 한 화면에서", "Calories · training · recovery · body metrics")],
+    ["ACT", t("근력운동과 러닝 기록, 세트별 진행 추적", "Strength + running logs with set-by-set progression")],
+    ["EAT", t("식사, 칼로리, 매크로 기록", "Nutrition, calories and macro tracking")],
+    ["PLAN", t("주간 운동 계획과 적응형 칼로리 목표", "Weekly training plan + adaptive calorie targets")],
+    ["PROGRESS", t("체중 · 체지방 · TDEE 추세 분석", "Weight · body fat · TDEE trend analysis")],
+  ];
+
+  const steps = [
+    {
+      eyebrow: "HYBRID LOG",
+      title: t("하나의 로컬 퍼스트 피트니스 시스템", "One local-first fitness system"),
+      body: t(
+        "운동, 식단, 회복, 체성분을 각각 따로 기록하는 대신 하나의 일일 흐름으로 연결했습니다.",
+        "Instead of tracking training, nutrition, recovery and body metrics in separate tools, Hybrid Log connects them into one daily workflow."
+      ),
+      content: (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 7, marginTop: 18 }}>
+          {["TRACK", "PLAN", "LEARN", "ADJUST"].map((label, i) => (
+            <div key={label} style={{
+              borderTop: `2px solid ${i === 0 ? theme.lift : theme.border}`,
+              paddingTop: 9,
+              minWidth: 0,
+            }}>
+              <div style={{ fontSize: 9.5, fontFamily: MONO_FONT_STACK, letterSpacing: "0.11em", color: i === 0 ? theme.lift : theme.textDim }}>{label}</div>
+              <div style={{ fontSize: 18, fontFamily: SERIF_FONT_STACK, fontStyle: "italic", color: theme.text, marginTop: 4 }}>{String(i + 1).padStart(2, "0")}</div>
+            </div>
+          ))}
+        </div>
+      ),
+    },
+    {
+      eyebrow: "PRODUCT MAP",
+      title: t("다섯 탭, 하나의 루프", "Five tabs, one loop"),
+      body: t(
+        "각 탭은 독립 기능이 아니라 오늘의 행동과 장기 추세를 연결하도록 설계했습니다.",
+        "The tabs are designed as one loop: today’s actions feed planning and long-term trends."
+      ),
+      content: (
+        <div style={{ display: "grid", gap: 0, marginTop: 14 }}>
+          {featureRows.map(([label, text], i) => (
+            <div key={label} style={{
+              display: "grid",
+              gridTemplateColumns: "74px 1fr",
+              gap: 12,
+              alignItems: "start",
+              padding: "11px 0",
+              borderTop: `1px solid ${theme.border}`,
+            }}>
+              <div style={{ fontSize: 10.5, fontFamily: MONO_FONT_STACK, letterSpacing: "0.13em", color: i === 0 ? theme.lift : theme.textDim, fontWeight: 800 }}>{label}</div>
+              <div style={{ fontSize: 13, lineHeight: 1.45, color: theme.text }}>{text}</div>
+            </div>
+          ))}
+        </div>
+      ),
+    },
+    {
+      eyebrow: "BUILD",
+      title: t("웹 데모와 Android를 같은 제품 로직으로", "One product logic across Android and Web"),
+      body: t(
+        "오프라인 우선 구조로 설계하고 네이티브 기능과 웹 기능을 플랫폼별로 분리했습니다.",
+        "Built offline-first, with shared product logic and platform-specific handling for native and web capabilities."
+      ),
+      content: (
+        <div style={{ marginTop: 18 }}>
+          <div style={{
+            padding: "14px 0",
+            borderTop: `1px solid ${theme.lift}`,
+            borderBottom: `1px solid ${theme.border}`,
+            fontFamily: MONO_FONT_STACK,
+            fontSize: 11,
+            lineHeight: 1.9,
+            letterSpacing: "0.05em",
+            color: theme.textDim,
+          }}>
+            <div><strong style={{ color: theme.text }}>FRONTEND</strong> · React · Vite</div>
+            <div><strong style={{ color: theme.text }}>CROSS-PLATFORM</strong> · Capacitor · Android + PWA</div>
+            <div><strong style={{ color: theme.text }}>DATA</strong> · Local-first storage · offline-first</div>
+            <div><strong style={{ color: theme.text }}>LOGIC</strong> · TDEE calibration · macros · progressive overload</div>
+          </div>
+        </div>
+      ),
+    },
+    {
+      eyebrow: "DEMO MODE",
+      title: t("이제 직접 눌러보세요", "Now explore it"),
+      body: t(
+        "보이는 기록은 포트폴리오용 샘플 데이터입니다. 식사와 운동을 수정하거나 계획을 바꿔도 괜찮습니다.",
+        "Everything you see is portfolio sample data. Feel free to edit meals, log training, change plans and explore the settings."
+      ),
+      content: (
+        <div style={{
+          marginTop: 18,
+          borderTop: `1px solid ${theme.border}`,
+          paddingTop: 14,
+          display: "grid",
+          gap: 8,
+        }}>
+          {[
+            t("데모 데이터는 접속 날짜 기준으로 자동 생성됩니다.", "Sample dates are generated relative to today."),
+            t("설정에서 언제든 데모 상태로 초기화할 수 있습니다.", "You can reset the sample state from Settings at any time."),
+            t("이 투어도 설정에서 다시 볼 수 있습니다.", "You can replay this tour from Settings."),
+          ].map((line, i) => (
+            <div key={i} style={{ display: "flex", gap: 9, alignItems: "flex-start", fontSize: 12.5, lineHeight: 1.45, color: theme.textDim }}>
+              <span style={{ color: theme.lift, fontFamily: MONO_FONT_STACK }}>0{i + 1}</span>
+              <span>{line}</span>
+            </div>
+          ))}
+        </div>
+      ),
+    },
+  ];
+
+  const current = steps[step];
+  const last = step === steps.length - 1;
+
+  return createPortal(
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Hybrid Log portfolio tour"
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 120,
+        background: "rgba(0,0,0,0.58)",
+        backdropFilter: "blur(9px)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "calc(18px + env(safe-area-inset-top, 0px)) 16px calc(18px + env(safe-area-inset-bottom, 0px))",
+        boxSizing: "border-box",
+      }}
+    >
+      <div style={{
+        width: "100%",
+        maxWidth: 500,
+        maxHeight: "calc(100dvh - 36px)",
+        overflowY: "auto",
+        background: theme.bg,
+        color: theme.text,
+        border: `1px solid ${theme.border}`,
+        borderRadius: 18,
+        boxShadow: "0 28px 90px rgba(0,0,0,0.40)",
+        padding: "20px 20px 18px",
+        boxSizing: "border-box",
+      }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, marginBottom: 20 }}>
+          <div style={{ display: "flex", gap: 6 }}>
+            {steps.map((_, i) => (
+              <div key={i} style={{
+                width: i === step ? 22 : 7,
+                height: 3,
+                borderRadius: 999,
+                background: i <= step ? theme.lift : theme.border,
+                transition: "all 0.2s ease",
+              }} />
+            ))}
+          </div>
+          <button
+            onClick={onClose}
+            style={{
+              border: "none",
+              background: "transparent",
+              color: theme.textFaint,
+              fontSize: 10.5,
+              fontFamily: MONO_FONT_STACK,
+              letterSpacing: "0.1em",
+              textTransform: "uppercase",
+              cursor: "pointer",
+              padding: 6,
+            }}
+          >
+            {t("건너뛰기", "Skip")}
+          </button>
+        </div>
+
+        <div style={{ fontSize: 10, fontFamily: MONO_FONT_STACK, letterSpacing: "0.18em", color: theme.lift, fontWeight: 800, marginBottom: 9 }}>
+          {current.eyebrow}
+        </div>
+        <div style={{ fontSize: 28, lineHeight: 1.05, fontWeight: 600, fontStyle: "italic", fontFamily: SERIF_FONT_STACK, color: theme.text, letterSpacing: "-0.02em" }}>
+          {current.title}
+        </div>
+        <div style={{ fontSize: 13.5, color: theme.textDim, lineHeight: 1.55, marginTop: 12 }}>
+          {current.body}
+        </div>
+
+        {current.content}
+
+        <div style={{ display: "flex", gap: 8, marginTop: 24, paddingTop: 14, borderTop: `1px solid ${theme.border}` }}>
+          {step > 0 && (
+            <button
+              onClick={() => setStep((s) => Math.max(0, s - 1))}
+              style={{
+                minHeight: 48,
+                padding: "0 16px",
+                borderRadius: 2,
+                border: `1px solid ${theme.border}`,
+                background: "transparent",
+                color: theme.textDim,
+                fontSize: 11,
+                fontWeight: 750,
+                fontFamily: MONO_FONT_STACK,
+                letterSpacing: "0.1em",
+                textTransform: "uppercase",
+                cursor: "pointer",
+              }}
+            >
+              {t("이전", "Back")}
+            </button>
+          )}
+          <button
+            onClick={() => last ? onClose() : setStep((s) => Math.min(steps.length - 1, s + 1))}
+            style={{
+              flex: 1,
+              minHeight: 48,
+              borderRadius: 2,
+              border: "none",
+              background: theme.lift,
+              color: theme.heroText || "#0A0A0A",
+              fontSize: 11.5,
+              fontWeight: 850,
+              fontFamily: MONO_FONT_STACK,
+              letterSpacing: "0.11em",
+              textTransform: "uppercase",
+              cursor: "pointer",
+            }}
+          >
+            {last ? t("Hybrid Log 둘러보기", "Explore Hybrid Log") : step === 0 ? t("데모 시작", "Start Demo") : t("다음", "Next")}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+function App() {
   const [loaded, setLoaded] = useState(false);
   const [showIntroAgain, setShowIntroAgain] = useState(false);
   const [showSettingsSheet, setShowSettingsSheet] = useState(false);
+  const [showPortfolioTour, setShowPortfolioTour] = useState(false);
   const [tab, setTab] = useState("today");
   const [actInitialView, setActInitialView] = useState(null);
   const [actResetSignal, setActResetSignal] = useState(0);
@@ -7876,6 +8148,13 @@ export default function App() {
       setDevDateOffsetDays(s.devDateOffsetDays || 0);
       setHapticsEnabled(s.hapticsEnabled !== false);
       setLoaded(true);
+      try {
+        if (WEB_BUILD && PORTFOLIO_DEMO && window.localStorage?.getItem(PORTFOLIO_TOUR_SEEN_KEY) !== "1") {
+          setShowPortfolioTour(true);
+        }
+      } catch (e) {
+        if (WEB_BUILD && PORTFOLIO_DEMO) setShowPortfolioTour(true);
+      }
     })();
   }, []);
 
@@ -7888,6 +8167,21 @@ export default function App() {
   const setWeekPlan = useCallback((v) => { setWeekPlanState(v); saveKey("weekPlan", v).then((ok) => !ok && setErr("저장 실패 / Save failed")); }, []);
   const setDayLogs = useCallback((v) => { setDayLogsState(v); saveKey("dayLogs", v).then((ok) => !ok && setErr("저장 실패 / Save failed")); }, []);
   const saveSettings = useCallback((v) => { setSettings(v); saveKey("settings", v).then((ok) => !ok && setErr("저장 실패 / Save failed")); }, []);
+
+  const closePortfolioTour = useCallback(() => {
+    try {
+      window.localStorage?.setItem(PORTFOLIO_TOUR_SEEN_KEY, "1");
+    } catch (e) {
+      // ignore persistence errors
+    }
+    setShowPortfolioTour(false);
+  }, []);
+
+  const replayPortfolioTour = useCallback(() => {
+    setShowSettingsSheet(false);
+    setShowPortfolioTour(true);
+  }, []);
+
 
   useEffect(() => {
     if (!document.getElementById("hybrid-log-tap-style")) {
@@ -8465,8 +8759,13 @@ export default function App() {
       </div>
 
       <SettingsSheet open={showSettingsSheet} onClose={() => setShowSettingsSheet(false)}>
-        <SettingsTab settings={settings} onSaveSettings={saveSettings} workouts={workouts} nutrition={nutrition} bodycomp={bodycomp} programs={programs} onShowIntro={() => setShowIntroAgain(true)} />
+        <SettingsTab settings={settings} onSaveSettings={saveSettings} workouts={workouts} nutrition={nutrition} bodycomp={bodycomp} programs={programs} onShowIntro={() => setShowIntroAgain(true)} onReplayPortfolioTour={replayPortfolioTour} />
       </SettingsSheet>
+
+      <PortfolioTour
+        open={showPortfolioTour}
+        onClose={closePortfolioTour}
+      />
 
       <div style={{
         position: "fixed", bottom: 0, left: 0, right: 0,

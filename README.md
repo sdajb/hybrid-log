@@ -407,3 +407,26 @@ No startup patch-note popup
 ```
 
 Android remains a separate build track.
+
+## 0.15.1 Portfolio Tour
+
+Fresh portfolio visitors now see a four-step product tour once:
+
+```text
+Hybrid Log
+→ Product Map
+→ Build
+→ Demo Mode
+```
+
+Dismiss state:
+
+```text
+hybridLog.portfolioTourSeen.v1
+```
+
+Replay:
+
+```text
+Settings → Portfolio Demo → Replay Portfolio Tour
+```
