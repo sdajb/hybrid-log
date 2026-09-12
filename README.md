@@ -391,3 +391,19 @@ env(safe-area-inset-bottom)
 ```
 
 After this update, delete the old desktop/home-screen shortcut and create it again so the new manifest and viewport metadata are used.
+
+## 0.15.0 Portfolio Demo
+
+The public web build now defaults to English and auto-seeds sample data for fresh visitors.
+
+Portfolio-specific behaviour:
+
+```text
+English default
+Relative-date demo data
+PORTFOLIO DEMO · SAMPLE DATA badge
+Settings → Reset Demo Data
+No startup patch-note popup
+```
+
+Android remains a separate build track.

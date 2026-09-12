@@ -17,10 +17,12 @@ import { registerPlugin } from "@capacitor/core";
 // android/app/src/main/java/.../StepCounterPlugin.java). No npm package;
 // registerPlugin() bridges to it by name. Safely rejects in the browser
 // preview / artifact (no native bridge), which callers below handle.
-const BUILD_RELEASE = "0.14.49-web";
+const BUILD_RELEASE = "0.15.0-web";
 const StepCounterPlugin = registerPlugin("StepCounter");
 const RestTimerPlugin = registerPlugin("RestTimer");
 const WEB_BUILD = true;
+const PORTFOLIO_DEMO = true;
+const PORTFOLIO_DEMO_SEED_KEY = "hybridLog.portfolioDemoSeeded.v1";
 const PATCH_NOTES_URL = "/hybrid-log/patch-notes.html";
 const PATCH_NOTES_SEEN_KEY = `hybridLog.patchNotesSeen.${BUILD_RELEASE}`;
 
@@ -286,7 +288,7 @@ function autoCalories(protein, carbs, fat) {
 
 // Language: 'ko' or 'en'. Context so every component can read it without
 // prop-drilling; t(ko, en) returns whichever string matches the language.
-const LangContext = createContext("ko");
+const LangContext = createContext("en");
 function useLang() {
   const lang = useContext(LangContext);
   const t = (ko, en) => (lang === "en" ? en : ko);
@@ -1065,7 +1067,7 @@ const DEFAULT_CARD_ORDER = ["goalProgress", "weekPlan", "steps", "dayLog", "main
 
 const DEFAULT_SETTINGS = {
   userName: "USERNAME",
-  language: "ko",
+  language: "en",
   colorPalette: DEFAULT_PALETTE,
   devDateOffsetDays: 0,
   goalMode: "cut",
@@ -1162,6 +1164,331 @@ const ALL_STORAGE_KEYS = [
 ];
 async function resetAllData() {
   await Promise.all(ALL_STORAGE_KEYS.map((k) => deleteKey(k)));
+  if (WEB_BUILD && PORTFOLIO_DEMO) {
+    try {
+      window.localStorage?.removeItem(PORTFOLIO_DEMO_SEED_KEY);
+    } catch (e) {
+      // ignore marker cleanup failure
+    }
+  }
+}
+
+function portfolioDateOffset(days) {
+  const d = nowDate();
+  d.setHours(12, 0, 0, 0);
+  d.setDate(d.getDate() + days);
+  return localDateStr(d);
+}
+
+function makeDemoLiftWorkout(date, programId, programName, duration, exercises) {
+  return {
+    id: `demo_${programId}_${date}`,
+    date,
+    type: "lift",
+    subtype: programName,
+    programId,
+    duration,
+    notes: "Portfolio demo session",
+    exercises,
+  };
+}
+
+function makeDemoExercise(id, name, nameEn, muscle, sets) {
+  return {
+    id,
+    exerciseId: id,
+    name,
+    nameEn,
+    muscle,
+    sets: sets.map(([weight, reps], index) => ({
+      weight,
+      reps,
+      setType: "working",
+      setNumber: index + 1,
+      targetReps: reps,
+    })),
+  };
+}
+
+function buildPortfolioDemoData() {
+  const today = portfolioDateOffset(0);
+  const todayIdx = weekPlanIndexForDate(today);
+
+  // Build a varied weekly plan around "today" so the first screen always
+  // demonstrates a completed training day, regardless of which weekday a
+  // recruiter opens the portfolio.
+  const weekPlan = Array.from({ length: 7 }, (_, i) => ({
+    day: ["월", "화", "수", "목", "금", "토", "일"][i],
+    kind: "rest",
+  }));
+  const setPlan = (offset, value) => {
+    weekPlan[(todayIdx + offset + 7) % 7] = {
+      day: weekPlan[(todayIdx + offset + 7) % 7].day,
+      ...value,
+    };
+  };
+  setPlan(0, { kind: "lift", programId: "push" });
+  setPlan(1, { kind: "run", runLabel: "S.R" });
+  setPlan(2, { kind: "lift", programId: "legs" });
+  setPlan(3, { kind: "rest" });
+  setPlan(4, { kind: "lift", programId: "pull" });
+  setPlan(5, { kind: "run", runLabel: "L.R" });
+  setPlan(6, { kind: "rest" });
+
+  const settings = {
+    ...DEFAULT_SETTINGS,
+    userName: "Alex",
+    language: "en",
+    hasOnboarded: true,
+    reorderHintDismissed: true,
+    hapticsEnabled: false,
+    goalMode: "cut",
+    cutTier: "standard",
+    heightCm: 178,
+    ageYears: 24,
+    sex: "male",
+    activityLevel: "high",
+    acceptedTdee: 2800,
+    startDate: portfolioDateOffset(-42),
+    startWeight: 86.0,
+    startBF: 22.4,
+    goalWeightLow: 78,
+    goalWeightHigh: 80,
+    goalBFLow: 14,
+    goalBFHigh: 16,
+  };
+
+  const bodycomp = [
+    { id: "demo_bc_0",  date: portfolioDateOffset(0),   weight: 82.4, bodyfat: 18.8, muscleMass: 37.2, condition: "fasted" },
+    { id: "demo_bc_1",  date: portfolioDateOffset(-4),  weight: 82.8, bodyfat: 19.1, muscleMass: 37.1, condition: "fasted" },
+    { id: "demo_bc_2",  date: portfolioDateOffset(-9),  weight: 83.2, bodyfat: 19.5, muscleMass: 37.1, condition: "fasted" },
+    { id: "demo_bc_3",  date: portfolioDateOffset(-14), weight: 83.7, bodyfat: 20.0, muscleMass: 37.0, condition: "fasted" },
+    { id: "demo_bc_4",  date: portfolioDateOffset(-21), weight: 84.4, bodyfat: 20.7, muscleMass: 36.9, condition: "fasted" },
+    { id: "demo_bc_5",  date: portfolioDateOffset(-28), weight: 85.0, bodyfat: 21.3, muscleMass: 36.8, condition: "fasted" },
+    { id: "demo_bc_6",  date: portfolioDateOffset(-35), weight: 85.5, bodyfat: 21.9, muscleMass: 36.7, condition: "fasted" },
+    { id: "demo_bc_7",  date: portfolioDateOffset(-42), weight: 86.0, bodyfat: 22.4, muscleMass: 36.6, condition: "fasted" },
+  ];
+
+  const workouts = [
+    makeDemoLiftWorkout(
+      portfolioDateOffset(0), "push", "Push", 47,
+      [
+        makeDemoExercise("ex_1", "인클라인/플랫 덤벨 프레스", "Incline / Flat DB Press", "chest", [[30, 10], [30, 9]]),
+        makeDemoExercise("ex_2", "시티드 덤벨 숄더 프레스", "Seated DB Shoulder Press", "shoulders", [[22, 10], [22, 9]]),
+        makeDemoExercise("ex_3", "딥스 (웨이트/머신)", "Dips (Weighted / Machine)", "triceps", [[12, 10], [12, 9]]),
+        makeDemoExercise("ex_4", "펙덱 또는 케이블 플라이", "Pec Deck or Cable Fly", "chest", [[45, 12], [45, 11]]),
+      ]
+    ),
+    {
+      id: "demo_run_long",
+      date: portfolioDateOffset(-2),
+      type: "run",
+      subtype: "L.R",
+      duration: 52,
+      distance: 8.4,
+      hr: 146,
+      notes: "Easy aerobic long run",
+      exercises: [],
+    },
+    makeDemoLiftWorkout(
+      portfolioDateOffset(-3), "pull", "Pull", 44,
+      [
+        makeDemoExercise("ex_9", "덤벨/바벨 로우", "DB / BB Row", "back", [[62.5, 10], [62.5, 9]]),
+        makeDemoExercise("ex_10", "풀업 또는 랫 풀다운", "Pull-Ups or Lat Pulldown", "back", [[65, 10], [65, 9]]),
+        makeDemoExercise("ex_11", "바벨 바이셉 컬", "BB Biceps Curls", "biceps", [[25, 10], [25, 9]]),
+        makeDemoExercise("ex_12", "랫 풀오버", "Lat Pullover", "back", [[30, 12], [30, 11]]),
+      ]
+    ),
+    makeDemoLiftWorkout(
+      portfolioDateOffset(-5), "legs", "Legs", 51,
+      [
+        makeDemoExercise("ex_5", "스쿼트", "Squats", "quads", [[90, 6], [90, 6], [90, 5]]),
+        makeDemoExercise("ex_6", "RDL (바벨/덤벨)", "RDL (Barbell / DB)", "hamstrings", [[80, 9], [80, 8]]),
+        makeDemoExercise("ex_7", "덤벨 런지", "DB Lunges", "quads", [[24, 10], [24, 10]]),
+        makeDemoExercise("ex_8", "카프 레이즈", "Calf Raises", "calves", [[70, 12], [70, 12]]),
+      ]
+    ),
+    {
+      id: "demo_run_short",
+      date: portfolioDateOffset(-6),
+      type: "run",
+      subtype: "S.R",
+      duration: 28.5,
+      distance: 5.0,
+      hr: 151,
+      notes: "5K steady run",
+      exercises: [],
+    },
+    makeDemoLiftWorkout(
+      portfolioDateOffset(-10), "push", "Push", 46,
+      [
+        makeDemoExercise("ex_1", "인클라인/플랫 덤벨 프레스", "Incline / Flat DB Press", "chest", [[28, 11], [28, 10]]),
+        makeDemoExercise("ex_2", "시티드 덤벨 숄더 프레스", "Seated DB Shoulder Press", "shoulders", [[20, 11], [20, 10]]),
+      ]
+    ),
+    makeDemoLiftWorkout(
+      portfolioDateOffset(-13), "pull", "Pull", 43,
+      [
+        makeDemoExercise("ex_9", "덤벨/바벨 로우", "DB / BB Row", "back", [[60, 10], [60, 9]]),
+        makeDemoExercise("ex_10", "풀업 또는 랫 풀다운", "Pull-Ups or Lat Pulldown", "back", [[62.5, 10], [62.5, 9]]),
+      ]
+    ),
+  ];
+
+  const dailyMenus = [
+    [
+      ["breakfast", "Greek yoghurt, berries & granola", 390, 31, 44, 10],
+      ["lunch", "Chicken rice bowl", 520, 45, 58, 12],
+      ["snack", "Protein shake & banana", 210, 22, 24, 4],
+      ["dinner", "Salmon, potatoes & greens", 480, 41, 48, 14],
+    ],
+    [
+      ["breakfast", "Eggs on sourdough", 430, 29, 41, 16],
+      ["lunch", "Turkey pesto pasta", 610, 46, 71, 15],
+      ["snack", "Skyr & kiwi", 180, 19, 20, 2],
+      ["dinner", "Beef stir-fry & rice", 690, 48, 76, 20],
+    ],
+    [
+      ["breakfast", "Overnight oats", 440, 30, 58, 11],
+      ["lunch", "Chicken wrap & salad", 560, 47, 52, 17],
+      ["snack", "Cottage cheese & fruit", 210, 24, 23, 3],
+      ["dinner", "Prawn rice bowl", 650, 45, 82, 14],
+    ],
+    [
+      ["breakfast", "Protein oats & berries", 420, 32, 54, 9],
+      ["lunch", "Tuna pasta salad", 580, 48, 66, 14],
+      ["snack", "Protein yoghurt", 170, 20, 15, 2],
+      ["dinner", "Chicken fajita bowl", 690, 50, 75, 18],
+    ],
+    [
+      ["breakfast", "Omelette & toast", 410, 32, 34, 16],
+      ["lunch", "Teriyaki chicken rice", 620, 46, 78, 13],
+      ["snack", "Apple & peanut butter", 240, 7, 30, 11],
+      ["dinner", "Lean beef chilli", 690, 49, 68, 20],
+    ],
+    [
+      ["breakfast", "Skyr, oats & banana", 400, 30, 55, 7],
+      ["lunch", "Chicken burrito bowl", 650, 48, 82, 16],
+      ["snack", "Protein bar", 210, 20, 23, 7],
+      ["dinner", "Cod, couscous & vegetables", 610, 47, 65, 14],
+    ],
+    [
+      ["breakfast", "Egg & avocado toast", 450, 27, 39, 20],
+      ["lunch", "Chicken pesto sandwich", 560, 42, 54, 17],
+      ["snack", "Skyr & berries", 180, 19, 20, 2],
+      ["dinner", "Turkey meatballs & pasta", 720, 51, 84, 18],
+    ],
+  ];
+
+  const nutrition = [];
+  dailyMenus.forEach((menu, dayIndex) => {
+    const date = portfolioDateOffset(-dayIndex);
+    menu.forEach((item, itemIndex) => {
+      const [mealCategory, meal, calories, protein, carbs, fat] = item;
+      nutrition.push({
+        id: `demo_n_${dayIndex}_${itemIndex}`,
+        date,
+        mealCategory,
+        meal,
+        calories,
+        protein,
+        carbs,
+        fat,
+        quality: dayIndex === 0 ? 0.95 : 0.9,
+      });
+    });
+  });
+
+  const dayLogs = [
+    { id: "demo_dl_0", date: portfolioDateOffset(0), mood: 4, energy: 4, sleep: 4, note: "Good energy. Training felt strong.", restCompleted: false },
+    { id: "demo_dl_1", date: portfolioDateOffset(-1), mood: 4, energy: 4, sleep: 5, note: "Recovery day. Light walk and mobility.", restCompleted: true },
+    { id: "demo_dl_2", date: portfolioDateOffset(-2), mood: 4, energy: 4, sleep: 4, note: "Long run felt comfortable.", restCompleted: false },
+    { id: "demo_dl_3", date: portfolioDateOffset(-3), mood: 4, energy: 5, sleep: 4, note: "Pull session progressed well.", restCompleted: false },
+    { id: "demo_dl_4", date: portfolioDateOffset(-4), mood: 4, energy: 3, sleep: 4, note: "Rest and mobility.", restCompleted: true },
+    { id: "demo_dl_5", date: portfolioDateOffset(-5), mood: 4, energy: 4, sleep: 4, note: "Leg day complete.", restCompleted: false },
+    { id: "demo_dl_6", date: portfolioDateOffset(-6), mood: 5, energy: 4, sleep: 4, note: "Short run complete.", restCompleted: false },
+  ];
+
+  const tdeeHistory = [
+    { date: portfolioDateOffset(-28), value: 2720 },
+    { date: portfolioDateOffset(-21), value: 2740 },
+    { date: portfolioDateOffset(-14), value: 2770 },
+    { date: portfolioDateOffset(-7), value: 2790 },
+    { date: portfolioDateOffset(0), value: 2800 },
+  ];
+
+  return {
+    settings,
+    bodycomp,
+    workouts,
+    nutrition,
+    tdeeHistory,
+    customFoods: [],
+    programs: DEFAULT_PROGRAMS,
+    weekPlan,
+    dayLogs,
+  };
+}
+
+async function savePortfolioDemoData() {
+  const demo = buildPortfolioDemoData();
+  await Promise.all([
+    saveKey("settings", demo.settings),
+    saveKey("bodycomp", demo.bodycomp),
+    saveKey("workouts", demo.workouts),
+    saveKey("nutrition", demo.nutrition),
+    saveKey("tdeeHistory", demo.tdeeHistory),
+    saveKey("customFoods", demo.customFoods),
+    saveKey("programs", demo.programs),
+    saveKey("weekPlan", demo.weekPlan),
+    saveKey("dayLogs", demo.dayLogs),
+    saveKey("storageVersion", STORAGE_VERSION),
+  ]);
+  try {
+    window.localStorage?.setItem(PORTFOLIO_DEMO_SEED_KEY, "1");
+  } catch (e) {
+    // local storage marker is only an optimisation; the app still works.
+  }
+  return demo;
+}
+
+async function ensurePortfolioDemoData() {
+  if (!WEB_BUILD || !PORTFOLIO_DEMO) return false;
+  try {
+    if (window.localStorage?.getItem(PORTFOLIO_DEMO_SEED_KEY) === "1") return false;
+  } catch (e) {
+    // continue and inspect app storage
+  }
+
+  const [settings, bodycomp, workouts, nutrition] = await Promise.all([
+    loadKey("settings", DEFAULT_SETTINGS),
+    loadKey("bodycomp", []),
+    loadKey("workouts", []),
+    loadKey("nutrition", []),
+  ]);
+
+  const looksFresh =
+    (!bodycomp || bodycomp.length === 0) &&
+    (!workouts || workouts.length === 0) &&
+    (!nutrition || nutrition.length === 0) &&
+    (!settings?.hasOnboarded || settings?.userName === "USERNAME");
+
+  if (looksFresh) {
+    await savePortfolioDemoData();
+    return true;
+  }
+
+  try {
+    window.localStorage?.setItem(PORTFOLIO_DEMO_SEED_KEY, "1");
+  } catch (e) {
+    // ignore marker failure
+  }
+  return false;
+}
+
+async function resetPortfolioDemoData() {
+  if (!WEB_BUILD || !PORTFOLIO_DEMO) return;
+  await savePortfolioDemoData();
 }
 
 async function collectBackupData() {
@@ -6739,6 +7066,50 @@ function SettingsTab({ settings, onSaveSettings, workouts, nutrition, bodycomp, 
           {t("패치노트 열기", "Open Patch Notes")}
         </a>
       </Card>
+
+      {WEB_BUILD && PORTFOLIO_DEMO && (
+        <Card variant="feature" accent={theme.lift}>
+          <SectionTitle>{t("포트폴리오 데모", "Portfolio Demo")}</SectionTitle>
+          <div style={{ fontSize: 12.5, color: theme.textDim, lineHeight: 1.55, marginBottom: 12 }}>
+            {t(
+              "이 웹 빌드는 기능을 바로 확인할 수 있도록 오늘 기준 샘플 데이터를 사용합니다.",
+              "This web build uses sample data relative to today so the product is immediately explorable."
+            )}
+          </div>
+          <div style={{ fontSize: 10.5, color: theme.textFaint, lineHeight: 1.65, fontFamily: MONO_FONT_STACK, letterSpacing: "0.04em", marginBottom: 12 }}>
+            REACT · VITE · CAPACITOR<br/>
+            LOCAL-FIRST STORAGE · ANDROID + WEB/PWA
+          </div>
+          <button
+            onClick={async () => {
+              const ok = window.confirm(t(
+                "샘플 데이터를 초기 상태로 되돌릴까요?",
+                "Reset all portfolio sample data to its original demo state?"
+              ));
+              if (!ok) return;
+              await resetPortfolioDemoData();
+              window.location.reload();
+            }}
+            style={{
+              width: "100%",
+              minHeight: 42,
+              borderRadius: 2,
+              border: `1px solid ${theme.lift}`,
+              background: tint(theme.lift, 0.12),
+              color: theme.lift,
+              fontFamily: MONO_FONT_STACK,
+              fontSize: 11.5,
+              fontWeight: 800,
+              letterSpacing: "0.1em",
+              textTransform: "uppercase",
+              cursor: "pointer",
+            }}
+          >
+            {t("데모 데이터 초기화", "Reset Demo Data")}
+          </button>
+        </Card>
+      )}
+
       <SettingsSectionLabel>{en("일반", "General")}</SettingsSectionLabel>
       <Card>
         <SectionTitle>{en("기본 프로필", "Profile Basics")}</SectionTitle>
@@ -7428,7 +7799,6 @@ export default function App() {
   const [loaded, setLoaded] = useState(false);
   const [showIntroAgain, setShowIntroAgain] = useState(false);
   const [showSettingsSheet, setShowSettingsSheet] = useState(false);
-  const [showStartupPatchNotes, setShowStartupPatchNotes] = useState(false);
   const [tab, setTab] = useState("today");
   const [actInitialView, setActInitialView] = useState(null);
   const [actResetSignal, setActResetSignal] = useState(0);
@@ -7489,6 +7859,7 @@ export default function App() {
   useEffect(() => {
     (async () => {
       await runStorageMigrations();
+      if (WEB_BUILD && PORTFOLIO_DEMO) await ensurePortfolioDemoData();
       const [s, b, w, n, t, cf, pr, wp, dl] = await Promise.all([
         loadKey("settings", DEFAULT_SETTINGS),
         loadKey("bodycomp", []),
@@ -7505,13 +7876,6 @@ export default function App() {
       setDevDateOffsetDays(s.devDateOffsetDays || 0);
       setHapticsEnabled(s.hapticsEnabled !== false);
       setLoaded(true);
-      try {
-        if (WEB_BUILD && window.localStorage?.getItem(PATCH_NOTES_SEEN_KEY) !== "1") {
-          setShowStartupPatchNotes(true);
-        }
-      } catch (e) {
-        if (WEB_BUILD) setShowStartupPatchNotes(true);
-      }
     })();
   }, []);
 
@@ -7524,25 +7888,6 @@ export default function App() {
   const setWeekPlan = useCallback((v) => { setWeekPlanState(v); saveKey("weekPlan", v).then((ok) => !ok && setErr("저장 실패 / Save failed")); }, []);
   const setDayLogs = useCallback((v) => { setDayLogsState(v); saveKey("dayLogs", v).then((ok) => !ok && setErr("저장 실패 / Save failed")); }, []);
   const saveSettings = useCallback((v) => { setSettings(v); saveKey("settings", v).then((ok) => !ok && setErr("저장 실패 / Save failed")); }, []);
-
-  const markPatchNotesSeen = useCallback(() => {
-    try {
-      window.localStorage?.setItem(PATCH_NOTES_SEEN_KEY, "1");
-    } catch (e) {
-      // ignore localStorage errors
-    }
-    setShowStartupPatchNotes(false);
-  }, []);
-
-  const openPatchNotesFromStartup = useCallback(() => {
-    try {
-      window.localStorage?.setItem(PATCH_NOTES_SEEN_KEY, "1");
-    } catch (e) {
-      // ignore localStorage errors
-    }
-    window.location.href = PATCH_NOTES_URL;
-  }, []);
-
 
   useEffect(() => {
     if (!document.getElementById("hybrid-log-tap-style")) {
@@ -7590,7 +7935,7 @@ export default function App() {
   }, []);
 
   const safeSettings = settings && typeof settings === "object" ? settings : DEFAULT_SETTINGS;
-  const lang = safeSettings.language || "ko";
+  const lang = safeSettings.language || "en";
   const t = (ko, en) => (lang === "en" ? en : ko);
   const theme = PALETTES[safeSettings.colorPalette] || PALETTES[DEFAULT_PALETTE];
 
@@ -7614,8 +7959,8 @@ export default function App() {
   // calorie target; the multiplier is meant to reflect a habitual pattern,
   // smoothed over about a week. Recomputed once per load and once daily
   // via getTodaySteps's own rollover (calling it triggers the archive).
-  const [recentAvgSteps, setRecentAvgSteps] = useState(null);
-  const [currentSteps, setCurrentSteps] = useState(null);
+  const [recentAvgSteps, setRecentAvgSteps] = useState(() => (WEB_BUILD && PORTFOLIO_DEMO ? 7800 : null));
+  const [currentSteps, setCurrentSteps] = useState(() => (WEB_BUILD && PORTFOLIO_DEMO ? 7842 : null));
   useEffect(() => {
     if (!loaded || WEB_BUILD) return;
     let mounted = true;
@@ -8011,7 +8356,27 @@ export default function App() {
             </svg>
           </div>
           <div>
-            <div style={{ fontSize: 18, lineHeight: 1.0, fontWeight: 600, fontStyle: "italic", letterSpacing: "-0.01em", fontFamily: SERIF_FONT_STACK, color: theme.text }}>Hybrid Log</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+              <div style={{ fontSize: 18, lineHeight: 1.0, fontWeight: 600, fontStyle: "italic", letterSpacing: "-0.01em", fontFamily: SERIF_FONT_STACK, color: theme.text }}>Hybrid Log</div>
+              {WEB_BUILD && PORTFOLIO_DEMO && (
+                <span style={{
+                  fontSize: 8.5,
+                  lineHeight: 1,
+                  letterSpacing: "0.12em",
+                  textTransform: "uppercase",
+                  fontFamily: MONO_FONT_STACK,
+                  fontWeight: 800,
+                  color: theme.lift,
+                  border: `1px solid ${tint(theme.lift, 0.45)}`,
+                  background: tint(theme.lift, 0.10),
+                  borderRadius: 999,
+                  padding: "4px 7px",
+                  whiteSpace: "nowrap",
+                }}>
+                  Portfolio Demo · Sample Data
+                </span>
+              )}
+            </div>
             {(() => {
               const now = nowDate();
               const dayN = settings.startDate ? Math.max(0, Math.round((now - parseLocalDate(settings.startDate)) / 86400000)) : null;
@@ -8102,12 +8467,6 @@ export default function App() {
       <SettingsSheet open={showSettingsSheet} onClose={() => setShowSettingsSheet(false)}>
         <SettingsTab settings={settings} onSaveSettings={saveSettings} workouts={workouts} nutrition={nutrition} bodycomp={bodycomp} programs={programs} onShowIntro={() => setShowIntroAgain(true)} />
       </SettingsSheet>
-
-      <PatchNotesStartupModal
-        open={showStartupPatchNotes}
-        onDismiss={markPatchNotesSeen}
-        onOpenNotes={openPatchNotesFromStartup}
-      />
 
       <div style={{
         position: "fixed", bottom: 0, left: 0, right: 0,
